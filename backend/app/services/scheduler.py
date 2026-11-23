@@ -371,25 +371,33 @@ async def fetch_gauge_job() -> Dict[str, Any]:
         return {"status": "skipped", "reason": "no_mrc_token"}
 
     connector = MRCConnector()
-    stored_stations = 0
+    stations_updated = 0
+    new_readings = 0
 
     for code in connector.get_supported_stations():
         try:
+            # The connector validates, de-duplicates, stores and broadcasts
+            # ("station_reading" SSE events) the readings itself.
             result = await connector.fetch_station_readings(code)
-            readings = result.get("readings") or []
+            stored = int(result.get("stored") or 0)
 
-            if readings:
-                stored_stations += 1
-                broker.publish(
-                    "station_reading",
-                    {"station_code": code, "count": len(readings)},
-                )
+            if stored:
+                stations_updated += 1
+                new_readings += stored
         except Exception as exc:
             logger.exception("Gauge fetch failed for %s: %s", code, exc)
 
-    logger.info("fetch_gauge_job completed: %s stations updated.", stored_stations)
+    logger.info(
+        "fetch_gauge_job completed: %s new readings across %s stations.",
+        new_readings,
+        stations_updated,
+    )
 
-    return {"status": "success", "stations_updated": stored_stations}
+    return {
+        "status": "success",
+        "stations_updated": stations_updated,
+        "new_readings": new_readings,
+    }
 
 
 # ==============================================================================

@@ -97,6 +97,11 @@ class Settings(BaseSettings):
     # Secret for POST /hydrology/telemetry (sensors, data loggers, scripts).
     # Leave empty to disable the ingestion endpoint.
     TELEMETRY_API_KEY: str = ""
+    # MRC gauge endpoint path (appended to MRC_API_BASE_URL); {code} = station code.
+    # Confirm the exact path against the credentials/docs MRC gives you.
+    MRC_WATERLEVEL_PATH: str = "station/{code}/waterlevel"
+    # MRC timestamps without a timezone are local Indochina time (UTC+7).
+    MRC_NAIVE_TZ_OFFSET_HOURS: float = 7.0
 
     # ==========================================================================
     # Geographic Domains & Presets

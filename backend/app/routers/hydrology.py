@@ -3,6 +3,7 @@ FloodPulse AI - Hydrology API
 
 Provides:
 - Hydrological station list and details
+- Live per-station GloFAS river discharge curves (Open-Meteo Flood API)
 - Actual stored water-level time series
 - Multi-station comparison
 - Station CSV export
@@ -23,7 +24,7 @@ import logging
 import secrets
 
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import aiosqlite
 import httpx
@@ -52,6 +53,12 @@ router = APIRouter(
     prefix="/hydrology",
     tags=["Hydrology"],
 )
+
+OPEN_METEO_FLOOD_URL = "https://flood-api.open-meteo.com/v1/flood"
+
+# In-memory cache for per-station live GloFAS curves (30 min TTL)
+_STATION_DISCHARGE_CACHE: Dict[int, Tuple[datetime, Dict[str, Any]]] = {}
+_STATION_CACHE_TTL_SECONDS = 1800
 
 
 # ---------------------------------------------------------------------
@@ -365,9 +372,6 @@ async def _get_station_timeseries(
 # RIVER DISCHARGE FORECAST (AUTO-LIVE GLOFAS SYNC)
 # ---------------------------------------------------------------------
 
-OPEN_METEO_FLOOD_URL = "https://flood-api.open-meteo.com/v1/flood"
-
-
 async def _fetch_and_store_glofas(
     db: aiosqlite.Connection,
     location_id: int,
@@ -459,7 +463,7 @@ async def get_discharge_forecast(
 ) -> Dict[str, Any]:
     """
     Return records from the latest discharge ingestion run.
-    Automatically fetches live GloFAS data if none exists or data is >6h old.
+    Automatically fetches live GloFAS data if none exists, data is >6h old, or refresh=True.
     """
 
     # 1. Find monitoring location (including coordinates for live fetch).
@@ -738,6 +742,93 @@ async def get_hydrological_station(
         )
 
     return _station_from_row(row)
+
+
+@router.get("/stations/{station_id}/discharge")
+async def get_station_live_discharge(
+    station_id: str,
+    refresh: bool = Query(
+        False,
+        description="Bypass cache and fetch live GloFAS discharge",
+    ),
+    db: aiosqlite.Connection = Depends(get_db),
+) -> Dict[str, Any]:
+    """
+    Fetch real live GloFAS river discharge (past 7 days + next 14 days)
+    for a specific hydrological station's GPS coordinates.
+    """
+    station = await _get_station_row(db, station_id)
+    if station is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Station '{station_id}' not found.",
+        )
+
+    st_id = int(station["id"])
+    now = datetime.now(timezone.utc)
+
+    if not refresh and st_id in _STATION_DISCHARGE_CACHE:
+        cached_at, cached_payload = _STATION_DISCHARGE_CACHE[st_id]
+        if (now - cached_at).total_seconds() < _STATION_CACHE_TTL_SECONDS:
+            return cached_payload
+
+    params = {
+        "latitude": float(station["lat"]),
+        "longitude": float(station["lon"]),
+        "daily": "river_discharge,river_discharge_mean,river_discharge_median,river_discharge_max",
+        "past_days": 7,
+        "forecast_days": 14,
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(OPEN_METEO_FLOOD_URL, params=params)
+            resp.raise_for_status()
+            data = resp.json()
+    except Exception as exc:
+        logger.warning(
+            "Live station GloFAS fetch failed for %s: %s",
+            station["code"],
+            exc,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Unable to reach Open-Meteo Flood API for live station discharge.",
+        ) from exc
+
+    daily = data.get("daily", {})
+    dates = daily.get("time", [])
+    discharges = daily.get("river_discharge", [])
+    means = daily.get("river_discharge_mean", [])
+    medians = daily.get("river_discharge_median", [])
+    maxes = daily.get("river_discharge_max", [])
+
+    records = [
+        {
+            "date": date_str,
+            "discharge_m3s": discharges[i] if i < len(discharges) else None,
+            "discharge_mean": means[i] if i < len(means) else None,
+            "discharge_median": medians[i] if i < len(medians) else None,
+            "discharge_max": maxes[i] if i < len(maxes) else None,
+            "data_source": "Open-Meteo GloFAS v4",
+        }
+        for i, date_str in enumerate(dates)
+    ]
+
+    payload = {
+        "station_id": st_id,
+        "station_code": station["code"],
+        "station_name": station["name"],
+        "province": station["province"],
+        "water_body": station["water_body"],
+        "lat": station["lat"],
+        "lon": station["lon"],
+        "data_source": "Open-Meteo GloFAS v4",
+        "updated_at": now.isoformat(),
+        "timeseries": records,
+    }
+    _STATION_DISCHARGE_CACHE[st_id] = (now, payload)
+    return payload
 
 
 # ---------------------------------------------------------------------
