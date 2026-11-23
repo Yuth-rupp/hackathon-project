@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import {
   Activity,
@@ -10,7 +10,6 @@ import {
   Eye,
   ShieldAlert,
   Users,
-  Database,
   CheckCircle2,
   AlertTriangle,
   MapPin,
@@ -25,19 +24,78 @@ import { MONITORING_LOCATIONS, DATA_SOURCES } from "@/lib/constants";
 import { RiskBadge } from "@/components/common/RiskBadge";
 import { useLanguage } from "@/context/LanguageContext";
 
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
+
+interface LiveAlert {
+  id: number;
+  severity: string;
+  province?: string;
+  status: string;
+  title: string;
+}
+
 export default function LandingPage() {
   const { language, t } = useLanguage();
   const [selectedProvinceId, setSelectedProvinceId] =
     useState<string>("pursat");
+  const [activeAlerts, setActiveAlerts] = useState<LiveAlert[]>([]);
+
+  useEffect(() => {
+    let isMounted = true;
+    async function loadLiveAlerts() {
+      try {
+        const res = await fetch(`${API_BASE}/alerts?status=active`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (isMounted && Array.isArray(data)) {
+          setActiveAlerts(data);
+        }
+      } catch (err) {
+        console.error("Failed to fetch live alerts for homepage:", err);
+      }
+    }
+
+    loadLiveAlerts();
+    const interval = setInterval(loadLiveAlerts, 60000);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, []);
 
   const provinces = MONITORING_LOCATIONS.filter((l) => l.type === "province");
   const stations = MONITORING_LOCATIONS.filter((l) => l.type === "station");
   const currentProvince =
     provinces.find((p) => p.id === selectedProvinceId) || provinces[0];
 
+  // Live alerts matching the currently selected province
+  const provinceAlerts = activeAlerts.filter((a) =>
+    (a.province || "")
+      .toLowerCase()
+      .includes(currentProvince.name.toLowerCase()),
+  );
+
+  const hasCriticalAlert = provinceAlerts.some(
+    (a) =>
+      a.severity.toLowerCase() === "very high" ||
+      a.severity.toLowerCase() === "critical",
+  );
+  const hasHighAlert = provinceAlerts.some(
+    (a) =>
+      a.severity.toLowerCase() === "high" ||
+      a.severity.toLowerCase() === "danger",
+  );
+
+  const currentRiskLevel = hasCriticalAlert
+    ? "very_high"
+    : hasHighAlert || currentProvince.id === "kampong-chhnang"
+      ? "high"
+      : "moderate";
+
   const features = [
     {
       icon: Droplets,
+      href: "/hydrology",
       title: t(
         "landing.features.f1Title",
         "Hydrological Telemetry & Flow Inversion",
@@ -51,6 +109,7 @@ export default function LandingPage() {
     },
     {
       icon: CloudRain,
+      href: "/weather",
       title: t(
         "landing.features.f2Title",
         "High-Res Meteorological Intelligence",
@@ -65,6 +124,7 @@ export default function LandingPage() {
     },
     {
       icon: Eye,
+      href: "/satellite",
       title: t(
         "landing.features.f3Title",
         "Copernicus SAR Satellite Delineation",
@@ -79,6 +139,7 @@ export default function LandingPage() {
     },
     {
       icon: ShieldAlert,
+      href: "/risk",
       title: t("landing.features.f4Title", "AI Multi-Hazard Risk Scoring"),
       desc: t(
         "landing.features.f4Desc",
@@ -90,6 +151,7 @@ export default function LandingPage() {
     },
     {
       icon: Users,
+      href: "/community",
       title: t(
         "landing.features.f5Title",
         "Community Vulnerability & Shelters",
@@ -101,25 +163,14 @@ export default function LandingPage() {
       tag: "NCDM 1294",
       color: "from-rose-500/20 to-pink-500/10 text-rose-400 border-rose-500/30",
     },
-    {
-      icon: Database,
-      title: t(
-        "landing.features.f6Title",
-        "Open Data & Multi-Decadal Baselines",
-      ),
-      desc: t(
-        "landing.features.f6Desc",
-        "Unified ingestion pipeline linking EC JRC 38-year water occurrence, Open Development Cambodia, and FABDEM bare-earth models.",
-      ),
-      tag: "JRC GSW & ODC",
-      color:
-        "from-purple-500/20 to-violet-500/10 text-purple-400 border-purple-500/30",
-    },
   ];
 
   return (
     <div className="min-h-screen bg-navy-950 text-slate-100 flex flex-col selection:bg-cyan-500 selection:text-white">
-      <Navbar />
+      {/* Stable Sticky Navbar */}
+      <div className="sticky top-0 z-50 w-full bg-navy-950/95 backdrop-blur-md border-b border-navy-800/80">
+        <Navbar />
+      </div>
 
       {/* Hero Section */}
       <section className="relative overflow-hidden pt-12 pb-20 md:pt-20 md:pb-28">
@@ -132,18 +183,23 @@ export default function LandingPage() {
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="text-center max-w-4xl mx-auto">
             {/* Pill Badge */}
-            <div className="inline-flex items-center gap-2 rounded-full border border-cyan-500/30 bg-navy-900/80 px-4 py-1.5 text-xs font-semibold text-cyan-300 shadow-lg shadow-cyan-500/10 backdrop-blur-md mb-6">
+            <Link
+              href="/alerts"
+              className="inline-flex items-center gap-2 rounded-full border border-cyan-500/30 bg-navy-900/80 px-4 py-1.5 text-xs font-semibold text-cyan-300 shadow-lg shadow-cyan-500/10 backdrop-blur-md mb-6 hover:border-cyan-400 transition-colors"
+            >
               <span className="relative flex h-2 w-2">
                 <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-cyan-400 opacity-75" />
                 <span className="relative inline-flex h-2 w-2 rounded-full bg-cyan-400" />
               </span>
               <span>
-                {t(
-                  "landing.badge",
-                  "Next-Gen Tonle Sap Early Warning Intelligence",
-                )}
+                {activeAlerts.length > 0
+                  ? `${activeAlerts.length} Live Flood Advisory Active — View Early Warning Center`
+                  : t(
+                      "landing.badge",
+                      "Next-Gen Tonle Sap Early Warning Intelligence",
+                    )}
               </span>
-            </div>
+            </Link>
 
             {/* Headline */}
             <h1 className="text-4xl font-extrabold tracking-tight text-white sm:text-6xl lg:text-7xl">
@@ -184,11 +240,14 @@ export default function LandingPage() {
             </div>
           </div>
 
-          {/* Stats Bar */}
+          {/* Clickable Live Stats Bar */}
           <div className="mt-16 grid grid-cols-2 gap-4 rounded-2xl border border-navy-800 bg-navy-900/60 p-6 shadow-2xl backdrop-blur-xl md:grid-cols-4 md:p-8">
-            <div className="flex flex-col items-center border-b border-navy-800/80 pb-4 md:border-b-0 md:border-r md:pb-0">
+            <Link
+              href="/community"
+              className="flex flex-col items-center border-b border-navy-800/80 pb-4 md:border-b-0 md:border-r md:pb-0 hover:opacity-80 transition-opacity"
+            >
               <span className="text-3xl font-extrabold text-white md:text-4xl">
-                5
+                {provinces.length}
               </span>
               <span className="mt-1 text-xs font-semibold text-cyan-400 uppercase tracking-wider">
                 {t("landing.stats.provinces", "Provinces Monitored")}
@@ -199,11 +258,14 @@ export default function LandingPage() {
                   "Siem Reap, Pursat, K. Chhnang...",
                 )}
               </span>
-            </div>
+            </Link>
 
-            <div className="flex flex-col items-center border-b border-navy-800/80 pb-4 md:border-b-0 md:border-r md:pb-0">
+            <Link
+              href="/hydrology"
+              className="flex flex-col items-center border-b border-navy-800/80 pb-4 md:border-b-0 md:border-r md:pb-0 hover:opacity-80 transition-opacity"
+            >
               <span className="text-3xl font-extrabold text-white md:text-4xl">
-                3
+                {stations.length}
               </span>
               <span className="mt-1 text-xs font-semibold text-cyan-400 uppercase tracking-wider">
                 {t("landing.stats.stations", "Key Hydro Stations")}
@@ -211,21 +273,27 @@ export default function LandingPage() {
               <span className="text-[11px] text-slate-400 mt-0.5">
                 {t("landing.stats.stationsSub", "Prek Kdam, K. Luong, K. Thom")}
               </span>
-            </div>
+            </Link>
 
-            <div className="flex flex-col items-center border-b border-navy-800/80 pb-4 md:border-b-0 md:border-r md:pb-0">
+            <Link
+              href="/alerts"
+              className="flex flex-col items-center border-b border-navy-800/80 pb-4 md:border-b-0 md:border-r md:pb-0 hover:opacity-80 transition-opacity"
+            >
               <span className="text-3xl font-extrabold text-white md:text-4xl">
-                7
+                {activeAlerts.length}
               </span>
               <span className="mt-1 text-xs font-semibold text-cyan-400 uppercase tracking-wider">
-                {t("landing.stats.feeds", "Real Data Feeds")}
+                Active Warnings
               </span>
               <span className="text-[11px] text-slate-400 mt-0.5">
-                {t("landing.stats.feedsSub", "Open-Meteo, Sentinel, JRC, ODC")}
+                Live Early Warning Registry
               </span>
-            </div>
+            </Link>
 
-            <div className="flex flex-col items-center">
+            <Link
+              href="/risk"
+              className="flex flex-col items-center hover:opacity-80 transition-opacity"
+            >
               <span className="text-3xl font-extrabold text-emerald-400 md:text-4xl">
                 {t("landing.stats.aiEngine", "AI Engine")}
               </span>
@@ -238,7 +306,7 @@ export default function LandingPage() {
                   "Flood Pulse vs Hazard Classification",
                 )}
               </span>
-            </div>
+            </Link>
           </div>
         </div>
       </section>
@@ -246,7 +314,7 @@ export default function LandingPage() {
       {/* Why FloodPulse AI Section */}
       <section
         id="why-floodpulse"
-        className="py-20 border-t border-navy-800/80 bg-navy-900/30"
+        className="py-20 border-t border-navy-800/80 bg-navy-900/30 scroll-mt-20"
       >
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
@@ -330,9 +398,12 @@ export default function LandingPage() {
                     )}
                   </span>
                 </div>
-                <span className="text-xs font-mono text-cyan-400">
+                <Link
+                  href="/hydrology"
+                  className="text-xs font-mono text-cyan-400 hover:underline"
+                >
                   Prek Kdam & Kampong Luong
-                </span>
+                </Link>
               </div>
 
               <div className="mt-5 space-y-4">
@@ -402,20 +473,23 @@ export default function LandingPage() {
                     "FloodPulse AI Discriminator",
                   )}
                 </span>
-                <span className="text-xs font-semibold text-cyan-400 flex items-center gap-1">
+                <Link
+                  href="/risk"
+                  className="text-xs font-semibold text-cyan-400 hover:text-cyan-300 flex items-center gap-1"
+                >
                   {t(
                     "landing.paradox.activeClassifier",
                     "Active ML Classifier",
                   )}{" "}
                   <CheckCircle2 className="h-3.5 w-3.5" />
-                </span>
+                </Link>
               </div>
             </div>
           </div>
         </div>
       </section>
 
-      {/* Core Features Section */}
+      {/* Core Features Section (All Clickable Links, JRC GSW & ODC Removed) */}
       <section className="py-20">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="text-center max-w-3xl mx-auto mb-16">
@@ -440,34 +514,37 @@ export default function LandingPage() {
             {features.map((f, idx) => {
               const Icon = f.icon;
               return (
-                <div
+                <Link
                   key={idx}
-                  className="group relative rounded-2xl border border-navy-800 bg-navy-900/60 p-6 shadow-xl backdrop-blur-md transition-all duration-300 hover:-translate-y-1 hover:border-cyan-500/40 hover:shadow-cyan-950/40"
+                  href={f.href}
+                  className="group relative flex flex-col justify-between rounded-2xl border border-navy-800 bg-navy-900/60 p-6 shadow-xl backdrop-blur-md transition-all duration-300 hover:-translate-y-1 hover:border-cyan-500/40 hover:shadow-cyan-950/40"
                 >
-                  <div className="flex items-center justify-between mb-4">
-                    <div
-                      className={`flex h-12 w-12 items-center justify-center rounded-xl border bg-gradient-to-br ${f.color}`}
-                    >
-                      <Icon className="h-6 w-6" />
+                  <div>
+                    <div className="flex items-center justify-between mb-4">
+                      <div
+                        className={`flex h-12 w-12 items-center justify-center rounded-xl border bg-gradient-to-br ${f.color}`}
+                      >
+                        <Icon className="h-6 w-6" />
+                      </div>
+                      <span className="rounded-md border border-navy-700 bg-navy-800/80 px-2 py-0.5 text-[10px] font-semibold text-slate-300">
+                        {f.tag}
+                      </span>
                     </div>
-                    <span className="rounded-md border border-navy-700 bg-navy-800/80 px-2 py-0.5 text-[10px] font-semibold text-slate-300">
-                      {f.tag}
-                    </span>
+
+                    <h3 className="text-lg font-bold text-white group-hover:text-cyan-300 transition-colors">
+                      {f.title}
+                    </h3>
+
+                    <p className="mt-2.5 text-xs text-slate-300 leading-relaxed">
+                      {f.desc}
+                    </p>
                   </div>
-
-                  <h3 className="text-lg font-bold text-white group-hover:text-cyan-300 transition-colors">
-                    {f.title}
-                  </h3>
-
-                  <p className="mt-2.5 text-xs text-slate-300 leading-relaxed">
-                    {f.desc}
-                  </p>
 
                   <div className="mt-5 flex items-center gap-1 text-xs font-semibold text-cyan-400 group-hover:translate-x-1 transition-transform">
                     <span>{t("landing.features.learnMore", "Learn More")}</span>
                     <ArrowRight className="h-3.5 w-3.5" />
                   </div>
-                </div>
+                </Link>
               );
             })}
           </div>
@@ -578,13 +655,7 @@ export default function LandingPage() {
                 </div>
 
                 <div className="flex items-center gap-2">
-                  <RiskBadge
-                    level={
-                      currentProvince.id === "kampong-chhnang"
-                        ? "high"
-                        : "moderate"
-                    }
-                  />
+                  <RiskBadge level={currentRiskLevel} />
                   <Link
                     href="/community"
                     className="rounded-lg border border-navy-700 bg-navy-800 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:border-cyan-500 hover:text-white transition-colors"
@@ -614,17 +685,30 @@ export default function LandingPage() {
                   </span>
                 </div>
 
-                <div className="rounded-xl border border-navy-800 bg-navy-950/60 p-4">
+                <Link
+                  href="/risk"
+                  className="rounded-xl border border-navy-800 bg-navy-950/60 p-4 hover:border-cyan-500/40 transition-colors"
+                >
                   <span className="text-[11px] uppercase tracking-wider text-slate-400">
                     {t(
                       "landing.coverage.inundationRisk",
                       "Flood Inundation Risk",
                     )}
                   </span>
-                  <p className="mt-1 text-xl font-bold text-amber-400">
-                    {currentProvince.id === "kampong-chhnang"
-                      ? t("risk.high", "High Risk")
-                      : t("risk.moderate", "Moderate Risk")}
+                  <p
+                    className={`mt-1 text-xl font-bold ${
+                      currentRiskLevel === "very_high"
+                        ? "text-rose-400"
+                        : currentRiskLevel === "high"
+                          ? "text-orange-400"
+                          : "text-amber-400"
+                    }`}
+                  >
+                    {currentRiskLevel === "very_high"
+                      ? "Critical Risk"
+                      : currentRiskLevel === "high"
+                        ? t("risk.high", "High Risk")
+                        : t("risk.moderate", "Moderate Risk")}
                   </p>
                   <span className="text-[10px] text-slate-400">
                     {t(
@@ -632,23 +716,37 @@ export default function LandingPage() {
                       "Based on GloFAS discharge",
                     )}
                   </span>
-                </div>
+                </Link>
 
-                <div className="rounded-xl border border-navy-800 bg-navy-950/60 p-4">
+                <Link
+                  href="/alerts"
+                  className="rounded-xl border border-navy-800 bg-navy-950/60 p-4 hover:border-cyan-500/40 transition-colors"
+                >
                   <span className="text-[11px] uppercase tracking-wider text-slate-400">
                     {t(
                       "landing.coverage.earlyWarningStatus",
                       "Early Warning Status",
                     )}
                   </span>
-                  <p className="mt-1 text-xl font-bold text-emerald-400">
-                    {t("landing.coverage.activeAlertDesk", "Active Alert Desk")}
+                  <p
+                    className={`mt-1 text-xl font-bold ${
+                      provinceAlerts.length > 0
+                        ? "text-rose-400"
+                        : "text-emerald-400"
+                    }`}
+                  >
+                    {provinceAlerts.length > 0
+                      ? `${provinceAlerts.length} Active Alert${provinceAlerts.length > 1 ? "s" : ""}`
+                      : t(
+                          "landing.coverage.activeAlertDesk",
+                          "Active Alert Desk",
+                        )}
                   </p>
                   <span className="text-[10px] text-slate-400">NCDM 1294</span>
-                </div>
+                </Link>
               </div>
 
-              {/* Hydro Stations Connected to this Province */}
+              {/* Clickable Hydro Stations Connected to this Province */}
               <div className="mt-6">
                 <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300 mb-3">
                   {t(
@@ -658,9 +756,10 @@ export default function LandingPage() {
                 </h4>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   {stations.map((st) => (
-                    <div
+                    <Link
                       key={st.id}
-                      className="rounded-xl border border-navy-800 bg-navy-950/40 p-3 hover:border-cyan-500/30 transition-colors"
+                      href="/hydrology"
+                      className="rounded-xl border border-navy-800 bg-navy-950/40 p-3 hover:border-cyan-500/40 hover:bg-navy-900/60 transition-colors block"
                     >
                       <div className="flex items-center gap-1.5 text-xs font-semibold text-cyan-300">
                         <Radio className="h-3 w-3 text-cyan-400 animate-pulse" />
@@ -679,7 +778,7 @@ export default function LandingPage() {
                       <p className="text-[10px] font-mono text-slate-400 mt-0.5">
                         {st.lat.toFixed(4)}°N, {st.lon.toFixed(4)}°E
                       </p>
-                    </div>
+                    </Link>
                   ))}
                 </div>
               </div>
@@ -698,7 +797,7 @@ export default function LandingPage() {
             <h2 className="mt-2 text-3xl font-extrabold text-white sm:text-4xl">
               {t(
                 "landing.sources.title",
-                "Powered by 7 Real Earth Observation Data Feeds",
+                "Powered by Real Earth Observation Data Feeds",
               )}
             </h2>
             <p className="mt-3 text-sm text-slate-300 sm:text-base">
