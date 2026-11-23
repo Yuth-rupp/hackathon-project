@@ -19,3 +19,4 @@ build/
 # OS & Editor
 .DS_Store
 Thumbs.db
+path/to/large-file
