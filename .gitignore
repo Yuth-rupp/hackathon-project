@@ -24,3 +24,5 @@ path/to/large-file
 Add-Content .gitignore "`nfloodpulse-ai.zip"
 git add .gitignore
 git commit -m "Ignore floodpulse-ai.zip"
+*.zip
+*.db

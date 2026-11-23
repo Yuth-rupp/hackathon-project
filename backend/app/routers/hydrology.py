@@ -6,7 +6,7 @@ Provides:
 - Actual stored water-level time series
 - Multi-station comparison
 - Station CSV export
-- Stored river-discharge forecasts for monitoring locations
+- Stored & auto-refreshed GloFAS river-discharge forecasts for monitoring locations
 
 Important:
 Monitoring locations and hydrological stations are separate
@@ -26,6 +26,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 import aiosqlite
+import httpx
 
 from fastapi import (
     APIRouter,
@@ -82,7 +83,6 @@ class StationDetail(BaseModel):
     latest_data_source: Optional[str] = None
     freshness: str = "no_data"          # live | delayed | stale | baseline | no_data
     age_seconds: Optional[int] = None
-
 
 
 class TimeSeriesPoint(BaseModel):
@@ -362,37 +362,115 @@ async def _get_station_timeseries(
 
 
 # ---------------------------------------------------------------------
-# RIVER DISCHARGE FORECAST
+# RIVER DISCHARGE FORECAST (AUTO-LIVE GLOFAS SYNC)
 # ---------------------------------------------------------------------
+
+OPEN_METEO_FLOOD_URL = "https://flood-api.open-meteo.com/v1/flood"
+
+
+async def _fetch_and_store_glofas(
+    db: aiosqlite.Connection,
+    location_id: int,
+    lat: float,
+    lon: float,
+) -> Optional[str]:
+    """
+    Fetch live GloFAS river discharge forecast from Open-Meteo Flood API
+    and store it in river_discharge. Returns the new retrieval_timestamp.
+    """
+    params = {
+        "latitude": lat,
+        "longitude": lon,
+        "daily": "river_discharge,river_discharge_mean,river_discharge_median,river_discharge_max",
+        "past_days": 3,
+        "forecast_days": 14,
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(OPEN_METEO_FLOOD_URL, params=params)
+            resp.raise_for_status()
+            data = resp.json()
+
+        daily = data.get("daily", {})
+        dates = daily.get("time", [])
+        if not dates:
+            return None
+
+        discharges = daily.get("river_discharge", [])
+        means = daily.get("river_discharge_mean", [])
+        medians = daily.get("river_discharge_median", [])
+        maxes = daily.get("river_discharge_max", [])
+
+        now_iso = datetime.now(timezone.utc).isoformat()
+        source_label = "Open-Meteo GloFAS v4"
+
+        for i, date_str in enumerate(dates):
+            val = discharges[i] if i < len(discharges) else None
+            val_mean = means[i] if i < len(means) else None
+            val_median = medians[i] if i < len(medians) else None
+            val_max = maxes[i] if i < len(maxes) else None
+
+            await db.execute(
+                """
+                INSERT INTO river_discharge (
+                    location_id,
+                    date,
+                    discharge_m3s,
+                    discharge_max,
+                    discharge_mean,
+                    discharge_median,
+                    data_source,
+                    retrieval_timestamp
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    location_id,
+                    date_str,
+                    val,
+                    val_max,
+                    val_mean,
+                    val_median,
+                    source_label,
+                    now_iso,
+                ),
+            )
+
+        await db.commit()
+        broker.publish("discharge_updated", {"location_id": location_id})
+        return now_iso
+
+    except Exception as exc:
+        logger.warning(
+            "Live GloFAS fetch failed for location %s (%s, %s): %s",
+            location_id,
+            lat,
+            lon,
+            exc,
+        )
+        return None
+
 
 @router.get("/discharge")
 async def get_discharge_forecast(
     location_id: int = Query(..., ge=1),
+    refresh: bool = Query(False, description="Force a live GloFAS refresh"),
     db: aiosqlite.Connection = Depends(get_db),
 ) -> Dict[str, Any]:
     """
     Return records from the latest discharge ingestion run.
-
-    location_id refers to monitoring_locations.id,
-    NOT stations.id.
-
-    Records from older ingestion runs are excluded.
+    Automatically fetches live GloFAS data if none exists or data is >6h old.
     """
 
-    # 1. Find monitoring location.
-
+    # 1. Find monitoring location (including coordinates for live fetch).
     cursor = await db.execute(
         """
-        SELECT
-            id,
-            name,
-            province
+        SELECT *
         FROM monitoring_locations
         WHERE id = ?
         """,
         (location_id,),
     )
-
     location = await cursor.fetchone()
 
     if location is None:
@@ -401,8 +479,23 @@ async def get_discharge_forecast(
             detail="Monitoring location not found.",
         )
 
-    # 2. Find the latest retrieval timestamp.
+    loc_keys = location.keys()
+    lat = (
+        location["lat"]
+        if "lat" in loc_keys
+        else location["latitude"]
+        if "latitude" in loc_keys
+        else None
+    )
+    lon = (
+        location["lon"]
+        if "lon" in loc_keys
+        else location["longitude"]
+        if "longitude" in loc_keys
+        else None
+    )
 
+    # 2. Find the latest retrieval timestamp.
     cursor = await db.execute(
         """
         SELECT MAX(retrieval_timestamp) AS latest_timestamp
@@ -411,19 +504,33 @@ async def get_discharge_forecast(
         """,
         (location_id,),
     )
-
     timestamp_row = await cursor.fetchone()
-
     latest_timestamp = (
         timestamp_row["latest_timestamp"]
         if timestamp_row
         else None
     )
 
-    # 3. Return empty response when no forecast exists.
+    # 3. Auto-fetch live GloFAS forecast if missing, stale (>6h), or refresh=True.
+    needs_fetch = refresh or not latest_timestamp
+    if latest_timestamp and not needs_fetch:
+        parsed_ts = _parse_timestamp(latest_timestamp)
+        if parsed_ts:
+            age_hours = (
+                datetime.now(timezone.utc) - parsed_ts
+            ).total_seconds() / 3600
+            if age_hours >= 6:
+                needs_fetch = True
 
+    if needs_fetch and lat is not None and lon is not None:
+        new_ts = await _fetch_and_store_glofas(
+            db, location_id, float(lat), float(lon)
+        )
+        if new_ts:
+            latest_timestamp = new_ts
+
+    # 4. Return empty response if still no forecast exists.
     if not latest_timestamp:
-
         return {
             "location_id": location["id"],
             "location_name": location["name"],
@@ -438,8 +545,7 @@ async def get_discharge_forecast(
             "updated_at": None,
         }
 
-    # 4. Retrieve only the latest ingestion run.
-
+    # 5. Retrieve only the latest ingestion run.
     cursor = await db.execute(
         """
         SELECT
@@ -455,21 +561,15 @@ async def get_discharge_forecast(
           AND retrieval_timestamp = ?
         ORDER BY date ASC, id ASC
         """,
-        (
-            location_id,
-            latest_timestamp,
-        ),
+        (location_id, latest_timestamp),
     )
-
     rows = await cursor.fetchall()
 
-    # 5. Build forecast records.
-
+    # 6. Build forecast records.
     forecast = []
     sources = set()
 
     for row in rows:
-
         forecast.append({
             "date": row["date"],
             "discharge_m3s": row["discharge_m3s"],
@@ -478,12 +578,10 @@ async def get_discharge_forecast(
             "discharge_median": row["discharge_median"],
             "data_source": row["data_source"],
         })
-
         if row["data_source"]:
             sources.add(row["data_source"])
 
-    # 6. Find the first available discharge value.
-
+    # 7. Find the first available discharge value.
     first_valid = next(
         (
             item
@@ -492,67 +590,48 @@ async def get_discharge_forecast(
         ),
         None,
     )
-
     first_discharge = (
         first_valid["discharge_m3s"]
         if first_valid is not None
         else None
     )
-
     reference_mean = (
         first_valid["discharge_mean"]
         if first_valid is not None
         else None
     )
 
-    # 7. Calculate deviation from forecast reference mean.
-
+    # 8. Calculate deviation from forecast reference mean.
     anomaly_pct = None
-
     if (
         first_discharge is not None
         and reference_mean is not None
         and reference_mean != 0
     ):
-
         anomaly_pct = round(
-            (
-                (first_discharge - reference_mean)
-                / reference_mean
-            ) * 100,
+            ((first_discharge - reference_mean) / reference_mean) * 100,
             1,
         )
 
-    # 8. Classify forecast status.
-
+    # 9. Classify forecast status.
     if first_valid is None:
         flow_status = "NO_DATA"
-
     elif anomaly_pct is None:
         flow_status = "UNKNOWN"
-
     elif anomaly_pct >= 25:
         flow_status = "HIGH"
-
     elif anomaly_pct <= -25:
         flow_status = "LOW"
-
     else:
         flow_status = "NORMAL"
-
-    # 9. Return response.
 
     return {
         "location_id": location["id"],
         "location_name": location["name"],
         "province": location["province"],
         "current_discharge_m3s": first_discharge,
-
-        # Kept for compatibility with the existing frontend.
-        # This is a forecast reference mean, not a historical mean.
         "historical_mean_m3s": reference_mean,
         "forecast_reference_mean_m3s": reference_mean,
-
         "anomaly_pct": anomaly_pct,
         "flow_status": flow_status,
         "forecast": forecast,
