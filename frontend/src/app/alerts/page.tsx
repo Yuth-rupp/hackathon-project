@@ -1,131 +1,330 @@
-'use client';
+"use client";
 
-import React, { useEffect, useState } from 'react';
-import { DashboardLayout } from '@/components/layout/DashboardLayout';
-import { RiskBadge } from '@/components/common/RiskBadge';
-import { fetchAlerts } from '@/lib/api';
-import { MONITORING_LOCATIONS } from '@/lib/constants';
-import { Alert, AlertSeverity } from '@/types';
+import React, { useEffect, useState, useCallback } from "react";
+import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { RiskBadge } from "@/components/common/RiskBadge";
+import { fetchAlerts } from "@/lib/api";
+import { MONITORING_LOCATIONS } from "@/lib/constants";
+import { Alert, AlertSeverity } from "@/types";
 import {
   Bell,
   AlertTriangle,
   Send,
   Bot,
-  Filter,
   CheckCircle2,
-  Clock,
   X,
   PlusCircle,
-  ExternalLink,
   ShieldAlert,
-} from 'lucide-react';
+  RefreshCw,
+} from "lucide-react";
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
+
+const toBackendSeverity = (sev: AlertSeverity): string => {
+  const map: Record<string, string> = {
+    critical: "Very High",
+    danger: "High",
+    warning: "Moderate",
+    info: "Low",
+  };
+  return map[sev] || "Moderate";
+};
+
+const normalizeSeverity = (sev: string): AlertSeverity => {
+  const s = (sev || "").toLowerCase();
+  if (s === "very high" || s === "critical") return "critical";
+  if (s === "high" || s === "danger") return "danger";
+  if (s === "moderate" || s === "warning") return "warning";
+  return "info";
+};
 
 export default function AlertsPage() {
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [selectedAlert, setSelectedAlert] = useState<Alert | null>(null);
-  const [filterSeverity, setFilterSeverity] = useState<string>('all');
-  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [filterSeverity, setFilterSeverity] = useState<string>("all");
+  const [searchQuery, setSearchQuery] = useState<string>("");
   const [loading, setLoading] = useState(true);
+  const [scanning, setScanning] = useState(false);
+
+  // Feedback banners
+  const [banner, setBanner] = useState<{
+    type: "success" | "error";
+    text: string;
+  } | null>(null);
 
   // New alert form state
   const [isCreateOpen, setIsCreateOpen] = useState(false);
-  const [newTitle, setNewTitle] = useState('');
-  const [newTitleKm, setNewTitleKm] = useState('');
-  const [newSeverity, setNewSeverity] = useState<AlertSeverity>('warning');
-  const [newLocation, setNewLocation] = useState('pursat');
-  const [newMessage, setNewMessage] = useState('');
-  const [newMessageKm, setNewMessageKm] = useState('');
-  const [createSuccess, setCreateSuccess] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [newTitle, setNewTitle] = useState("");
+  const [newTitleKm, setNewTitleKm] = useState("");
+  const [newSeverity, setNewSeverity] = useState<AlertSeverity>("warning");
+  const [newLocation, setNewLocation] = useState("pursat");
+  const [newMessage, setNewMessage] = useState("");
+  const [newMessageKm, setNewMessageKm] = useState("");
+  const [broadcastTelegram, setBroadcastTelegram] = useState(true);
 
-  // Telegram test state
-  const [telegramToken, setTelegramToken] = useState('6184920412:AAH9*******************');
-  const [telegramChatId, setTelegramChatId] = useState('-1001928472910');
-  const [telegramTestStatus, setTelegramTestStatus] = useState<'idle' | 'testing' | 'success'>('idle');
+  // Telegram live state
+  const [telegramConnected, setTelegramConnected] = useState<boolean>(false);
+  const [telegramToken, setTelegramToken] = useState("Loading...");
+  const [telegramChatId, setTelegramChatId] = useState("");
+  const [telegramTestStatus, setTelegramTestStatus] = useState<
+    "idle" | "testing" | "success"
+  >("idle");
 
-  useEffect(() => {
-    async function loadAlerts() {
-      try {
-        setLoading(true);
-        const data = await fetchAlerts();
-        setAlerts(data);
-      } catch (err) {
-        console.error('Error fetching alerts:', err);
-      } finally {
-        setLoading(false);
-      }
+  const showBanner = (type: "success" | "error", text: string) => {
+    setBanner({ type, text });
+    setTimeout(() => setBanner(null), 5000);
+  };
+
+  const loadAlerts = useCallback(async () => {
+    try {
+      const data = await fetchAlerts();
+      setAlerts(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error("Error fetching alerts:", err);
+    } finally {
+      setLoading(false);
     }
-    loadAlerts();
   }, []);
 
-  const handleCreateAlert = (e: React.FormEvent) => {
+  const loadTelegramStatus = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/alerts/telegram-status`);
+      if (!res.ok) return;
+      const data = await res.json();
+      setTelegramConnected(Boolean(data.connected));
+      setTelegramToken(data.masked_token || "Not Configured");
+      if (data.default_chat_id) {
+        setTelegramChatId(data.default_chat_id);
+      }
+    } catch (err) {
+      console.error("Error fetching Telegram status:", err);
+      setTelegramToken("Unavailable");
+    }
+  }, []);
+
+  useEffect(() => {
+    loadAlerts();
+    loadTelegramStatus();
+    const interval = setInterval(loadAlerts, 30000);
+    return () => clearInterval(interval);
+  }, [loadAlerts, loadTelegramStatus]);
+
+  const handleRunLiveScan = async () => {
+    setScanning(true);
+    try {
+      const res = await fetch(`${API_BASE}/alerts/evaluate`, {
+        method: "POST",
+      });
+      if (!res.ok) throw new Error(`Scan failed (${res.status})`);
+      const data = await res.json();
+      await loadAlerts();
+      showBanner(
+        "success",
+        `Live threshold scan completed. ${data.new_alerts_generated || 0} new alert(s) triggered.`,
+      );
+    } catch (err) {
+      console.error("Live scan failed:", err);
+      showBanner(
+        "error",
+        "Failed to run live threshold scan. Verify the backend is running.",
+      );
+    } finally {
+      setScanning(false);
+    }
+  };
+
+  const handleCreateAlert = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newTitle || !newMessage) return;
 
-    const loc = MONITORING_LOCATIONS.find((l) => l.id === newLocation) || MONITORING_LOCATIONS[0];
+    const loc =
+      MONITORING_LOCATIONS.find((l) => l.id === newLocation) ||
+      MONITORING_LOCATIONS[0];
+    setSubmitting(true);
 
-    const created: Alert = {
-      id: `alt-${Date.now()}`,
-      severity: newSeverity,
-      title: newTitle,
-      title_km: newTitleKm || undefined,
-      message: newMessage,
-      message_km: newMessageKm || undefined,
-      location_id: loc.id,
-      location_name: loc.name,
-      province: loc.province,
-      category: 'flood',
-      issued_at: new Date().toISOString(),
-      expires_at: new Date(Date.now() + 86400000 * 2).toISOString(),
-      status: 'active',
-    };
+    try {
+      const res = await fetch(`${API_BASE}/alerts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          severity: toBackendSeverity(newSeverity),
+          title: newTitle,
+          title_km: newTitleKm || null,
+          message: newMessage,
+          message_km: newMessageKm || null,
+          province: loc.province,
+          broadcast_telegram: broadcastTelegram,
+        }),
+      });
 
-    setAlerts([created, ...alerts]);
-    setIsCreateOpen(false);
-    setCreateSuccess(true);
-    setNewTitle('');
-    setNewTitleKm('');
-    setNewMessage('');
-    setNewMessageKm('');
-    setTimeout(() => setCreateSuccess(false), 4000);
+      if (!res.ok) throw new Error(`Failed to dispatch alert (${res.status})`);
+
+      const created = await res.json();
+      await loadAlerts();
+      setIsCreateOpen(false);
+      setNewTitle("");
+      setNewTitleKm("");
+      setNewMessage("");
+      setNewMessageKm("");
+      showBanner(
+        "success",
+        created.telegram_sent
+          ? "Emergency advisory saved and broadcasted to Telegram."
+          : "Emergency advisory saved to registry.",
+      );
+    } catch (err) {
+      console.error("Dispatch failed:", err);
+      showBanner(
+        "error",
+        "Failed to dispatch alert. Check backend connection and logs.",
+      );
+    } finally {
+      setSubmitting(false);
+    }
   };
 
-  const handleTelegramTest = () => {
-    setTelegramTestStatus('testing');
-    setTimeout(() => {
-      setTelegramTestStatus('success');
-      setTimeout(() => setTelegramTestStatus('idle'), 3500);
-    }, 1200);
+  const handleUpdateStatus = async (
+    alertId: string | number,
+    action: "acknowledge" | "resolve",
+  ) => {
+    try {
+      const body =
+        action === "acknowledge"
+          ? { responder_name: "Provincial Disaster Management Committee" }
+          : {
+              resolution_notes: "Resolved from Early Warning Console",
+              resolved_by: "Disaster Coordinator",
+            };
+
+      const res = await fetch(`${API_BASE}/alerts/${alertId}/${action}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+
+      if (!res.ok) throw new Error(`Failed to ${action} alert (${res.status})`);
+      await loadAlerts();
+      setSelectedAlert(null);
+      showBanner(
+        "success",
+        action === "acknowledge"
+          ? "Alert acknowledged."
+          : "Alert marked as resolved.",
+      );
+    } catch (err) {
+      console.error(err);
+      showBanner("error", `Could not ${action} alert.`);
+    }
   };
 
-  // Filter alerts
+  const handleTelegramTest = async () => {
+    setTelegramTestStatus("testing");
+    try {
+      const url = telegramChatId.trim()
+        ? `${API_BASE}/alerts/test-telegram?chat_id=${encodeURIComponent(telegramChatId.trim())}`
+        : `${API_BASE}/alerts/test-telegram`;
+
+      const res = await fetch(url, { method: "POST" });
+      const data = await res.json();
+
+      if (res.ok && data.success !== false) {
+        setTelegramTestStatus("success");
+        showBanner("success", "Test notification delivered to Telegram.");
+        setTimeout(() => setTelegramTestStatus("idle"), 3500);
+      } else {
+        throw new Error(data.error || data.detail || "Telegram test failed");
+      }
+    } catch (err: any) {
+      console.error("Telegram test error:", err);
+      setTelegramTestStatus("idle");
+      showBanner(
+        "error",
+        `Telegram test failed: ${err?.message || "Check TELEGRAM_BOT_TOKEN and Chat ID."}`,
+      );
+    }
+  };
+
+  // Filter alerts safely across both frontend & backend schemas
   const filteredAlerts = alerts.filter((a) => {
-    const matchesSeverity = filterSeverity === 'all' || a.severity === filterSeverity;
+    const normSev = normalizeSeverity(a.severity);
+    const matchesSeverity =
+      filterSeverity === "all" || normSev === filterSeverity;
+    const locText = (a.location_name || a.province || "").toLowerCase();
+    const q = searchQuery.toLowerCase();
     const matchesSearch =
-      a.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      a.location_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      a.message.toLowerCase().includes(searchQuery.toLowerCase());
+      (a.title || "").toLowerCase().includes(q) ||
+      locText.includes(q) ||
+      (a.message || "").toLowerCase().includes(q);
     return matchesSeverity && matchesSearch;
   });
+
+  const renderStatusBadge = (status: string) => {
+    const s = (status || "active").toLowerCase();
+    if (s === "resolved") {
+      return (
+        <span className="inline-flex items-center gap-1 rounded bg-slate-500/10 px-2 py-0.5 text-[10px] font-medium text-slate-400 border border-slate-500/20">
+          Resolved
+        </span>
+      );
+    }
+    if (s === "acknowledged") {
+      return (
+        <span className="inline-flex items-center gap-1 rounded bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-400 border border-amber-500/20">
+          Acknowledged
+        </span>
+      );
+    }
+    return (
+      <span className="inline-flex items-center gap-1 rounded bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-400 border border-emerald-500/20">
+        <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+        Active
+      </span>
+    );
+  };
 
   return (
     <DashboardLayout
       title="Early Warning Center & Notification Dispatch"
       subtitle="Automated threshold surveillance, multi-channel alerting, and Telegram Bot dispatch"
       actions={
-        <button
-          onClick={() => setIsCreateOpen(true)}
-          className="flex items-center gap-1.5 rounded-lg bg-rose-600 px-3.5 py-1.5 text-xs font-semibold text-white shadow-md hover:bg-rose-500 transition-colors"
-        >
-          <PlusCircle className="h-3.5 w-3.5" />
-          <span>Dispatch Emergency Alert</span>
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleRunLiveScan}
+            disabled={scanning}
+            className="flex items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-950/60 px-3 py-1.5 text-xs font-semibold text-cyan-300 hover:bg-cyan-900/60 transition-colors disabled:opacity-50"
+          >
+            <RefreshCw
+              className={`h-3.5 w-3.5 ${scanning ? "animate-spin" : ""}`}
+            />
+            <span>{scanning ? "Scanning..." : "Run Live Scan"}</span>
+          </button>
+
+          <button
+            onClick={() => setIsCreateOpen(true)}
+            className="flex items-center gap-1.5 rounded-lg bg-rose-600 px-3.5 py-1.5 text-xs font-semibold text-white shadow-md hover:bg-rose-500 transition-colors"
+          >
+            <PlusCircle className="h-3.5 w-3.5" />
+            <span>Dispatch Emergency Alert</span>
+          </button>
+        </div>
       }
     >
-      {/* Success banner */}
-      {createSuccess && (
-        <div className="flex items-center gap-2 rounded-lg border border-emerald-500/40 bg-emerald-950/80 p-3 text-xs text-emerald-300">
-          <CheckCircle2 className="h-4 w-4" />
-          <span>New emergency advisory broadcasted to multi-channel dispatch network.</span>
+      {/* Status Banner */}
+      {banner && (
+        <div
+          className={`flex items-center gap-2 rounded-lg border p-3 text-xs ${
+            banner.type === "success"
+              ? "border-emerald-500/40 bg-emerald-950/80 text-emerald-300"
+              : "border-rose-500/40 bg-rose-950/80 text-rose-300"
+          }`}
+        >
+          {banner.type === "success" ? (
+            <CheckCircle2 className="h-4 w-4 shrink-0" />
+          ) : (
+            <AlertTriangle className="h-4 w-4 shrink-0" />
+          )}
+          <span>{banner.text}</span>
         </div>
       )}
 
@@ -138,7 +337,13 @@ export default function AlertsPage() {
               Critical Public Safety Notice
             </p>
             <p className="leading-relaxed text-amber-300/90">
-              <strong>FloodPulse AI does not replace official emergency warnings</strong> issued by the Ministry of Water Resources and Meteorology (MOWRAM) or the National Committee for Disaster Management (NCDM). Always cross-reference bulletins with official provincial administration broadcasts.
+              <strong>
+                FloodPulse AI does not replace official emergency warnings
+              </strong>{" "}
+              issued by the Ministry of Water Resources and Meteorology (MOWRAM)
+              or the National Committee for Disaster Management (NCDM). Always
+              cross-reference bulletins with official provincial administration
+              broadcasts.
             </p>
           </div>
         </div>
@@ -155,7 +360,6 @@ export default function AlertsPage() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            {/* Search Input */}
             <input
               type="text"
               placeholder="Search alerts or locations..."
@@ -164,17 +368,16 @@ export default function AlertsPage() {
               className="rounded-lg border border-navy-700 bg-navy-950 px-3 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:border-cyan-500 focus:outline-none"
             />
 
-            {/* Severity Filter */}
             <select
               value={filterSeverity}
               onChange={(e) => setFilterSeverity(e.target.value)}
               className="rounded-lg border border-navy-700 bg-navy-950 px-3 py-1.5 text-xs text-slate-200 focus:border-cyan-500 focus:outline-none"
             >
               <option value="all">All Severities</option>
-              <option value="critical">Critical / Emergency</option>
-              <option value="danger">Danger</option>
-              <option value="warning">Warning</option>
-              <option value="info">Info</option>
+              <option value="critical">Critical / Very High</option>
+              <option value="danger">Danger / High</option>
+              <option value="warning">Warning / Moderate</option>
+              <option value="info">Info / Low</option>
             </select>
           </div>
         </div>
@@ -194,68 +397,94 @@ export default function AlertsPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-navy-800/60">
-              {filteredAlerts.length === 0 ? (
+              {loading ? (
                 <tr>
-                  <td colSpan={7} className="py-8 text-center text-xs text-slate-500">
+                  <td
+                    colSpan={7}
+                    className="py-8 text-center text-xs text-slate-500"
+                  >
+                    Loading live warnings...
+                  </td>
+                </tr>
+              ) : filteredAlerts.length === 0 ? (
+                <tr>
+                  <td
+                    colSpan={7}
+                    className="py-8 text-center text-xs text-slate-500"
+                  >
                     No active warnings matching the filter criteria.
                   </td>
                 </tr>
               ) : (
-                filteredAlerts.map((alt) => (
-                  <tr
-                    key={alt.id}
-                    onClick={() => setSelectedAlert(alt)}
-                    className="hover:bg-navy-800/40 cursor-pointer transition-colors"
-                  >
-                    <td className="py-3 px-3">
-                      <RiskBadge
-                        level={
-                          alt.severity === 'critical' || alt.severity === 'danger'
-                            ? 'very_high'
-                            : alt.severity === 'warning'
-                            ? 'high'
-                            : 'moderate'
-                        }
-                        size="sm"
-                      />
-                    </td>
-                    <td className="py-3 px-3">
-                      <div className="font-semibold text-white">{alt.title}</div>
-                      {alt.title_km && (
-                        <div className="text-[11px] text-slate-400 font-sans">{alt.title_km}</div>
-                      )}
-                    </td>
-                    <td className="py-3 px-3 font-medium text-cyan-300">{alt.province}</td>
-                    <td className="py-3 px-3 uppercase text-[10px] font-mono text-slate-400">
-                      {alt.category}
-                    </td>
-                    <td className="py-3 px-3 font-mono text-slate-400">
-                      {new Date(alt.issued_at).toLocaleString([], {
-                        month: 'short',
-                        day: 'numeric',
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      })}
-                    </td>
-                    <td className="py-3 px-3">
-                      <span className="inline-flex items-center gap-1 rounded bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-400 border border-emerald-500/20">
-                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                        Active
-                      </span>
-                    </td>
-                    <td className="py-3 px-3 text-right">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setSelectedAlert(alt);
-                        }}
-                        className="text-xs text-cyan-400 hover:text-cyan-300 underline"
-                      >
-                        Inspect
-                      </button>
-                    </td>
-                  </tr>
-                ))
+                filteredAlerts.map((alt) => {
+                  const normSev = normalizeSeverity(alt.severity);
+                  const issuedAt = alt.issued_at || (alt as any).created_at;
+                  const category =
+                    alt.category || (alt as any).alert_type || "flood";
+
+                  return (
+                    <tr
+                      key={alt.id}
+                      onClick={() => setSelectedAlert(alt)}
+                      className="hover:bg-navy-800/40 cursor-pointer transition-colors"
+                    >
+                      <td className="py-3 px-3">
+                        <RiskBadge
+                          level={
+                            normSev === "critical"
+                              ? "very_high"
+                              : normSev === "danger"
+                                ? "high"
+                                : normSev === "warning"
+                                  ? "moderate"
+                                  : "low"
+                          }
+                          size="sm"
+                        />
+                      </td>
+                      <td className="py-3 px-3">
+                        <div className="font-semibold text-white">
+                          {alt.title}
+                        </div>
+                        {alt.title_km && (
+                          <div className="text-[11px] text-slate-400 font-sans">
+                            {alt.title_km}
+                          </div>
+                        )}
+                      </td>
+                      <td className="py-3 px-3 font-medium text-cyan-300">
+                        {alt.province || alt.location_name || "Tonle Sap Basin"}
+                      </td>
+                      <td className="py-3 px-3 uppercase text-[10px] font-mono text-slate-400">
+                        {category}
+                      </td>
+                      <td className="py-3 px-3 font-mono text-slate-400">
+                        {issuedAt
+                          ? new Date(issuedAt).toLocaleString([], {
+                              month: "short",
+                              day: "numeric",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })
+                          : "—"}
+                      </td>
+                      <td className="py-3 px-3">
+                        {renderStatusBadge(alt.status)}
+                      </td>
+                      <td className="py-3 px-3 text-right">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedAlert(alt);
+                          }}
+                          className="text-xs text-cyan-400 hover:text-cyan-300 underline"
+                        >
+                          Inspect
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
@@ -272,19 +501,28 @@ export default function AlertsPage() {
                 Telegram Early Warning Bot Integration (@TonleSapFloodBot)
               </h3>
               <p className="text-xs text-slate-400 mt-0.5">
-                Automated webhook relay for real-time flood pulse advisories to community leaders
+                Automated webhook relay for real-time flood pulse advisories to
+                community leaders
               </p>
             </div>
           </div>
 
-          <span className="rounded-full bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-400 border border-emerald-500/30">
-            Bot Connected & Ready
+          <span
+            className={`rounded-full px-3 py-1 text-xs font-semibold border ${
+              telegramConnected
+                ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30"
+                : "bg-amber-500/10 text-amber-400 border-amber-500/30"
+            }`}
+          >
+            {telegramConnected ? "Bot Connected & Ready" : "Bot Not Configured"}
           </span>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-center">
           <div className="md:col-span-5">
-            <label className="block text-xs text-slate-400 mb-1">Telegram Bot Token (Masked)</label>
+            <label className="block text-xs text-slate-400 mb-1">
+              Telegram Bot Token (Masked)
+            </label>
             <input
               type="text"
               value={telegramToken}
@@ -294,10 +532,13 @@ export default function AlertsPage() {
           </div>
 
           <div className="md:col-span-4">
-            <label className="block text-xs text-slate-400 mb-1">Target Community Broadcast Chat ID</label>
+            <label className="block text-xs text-slate-400 mb-1">
+              Target Community Broadcast Chat ID
+            </label>
             <input
               type="text"
               value={telegramChatId}
+              placeholder="Uses backend .env default if empty"
               onChange={(e) => setTelegramChatId(e.target.value)}
               className="w-full rounded-lg border border-navy-700 bg-navy-950 px-3 py-2 text-xs font-mono text-slate-200 focus:border-cyan-500 focus:outline-none"
             />
@@ -306,16 +547,18 @@ export default function AlertsPage() {
           <div className="md:col-span-3 flex items-end">
             <button
               onClick={handleTelegramTest}
-              disabled={telegramTestStatus === 'testing'}
-              className="w-full flex items-center justify-center gap-2 rounded-lg bg-cyan-600 px-4 py-2 text-xs font-semibold text-white hover:bg-cyan-500 transition-colors"
+              disabled={telegramTestStatus === "testing"}
+              className="w-full flex items-center justify-center gap-2 rounded-lg bg-cyan-600 px-4 py-2 text-xs font-semibold text-white hover:bg-cyan-500 transition-colors disabled:opacity-50"
             >
-              <Send className={`h-3.5 w-3.5 ${telegramTestStatus === 'testing' ? 'animate-bounce' : ''}`} />
+              <Send
+                className={`h-3.5 w-3.5 ${telegramTestStatus === "testing" ? "animate-bounce" : ""}`}
+              />
               <span>
-                {telegramTestStatus === 'testing'
-                  ? 'Dispatching Test...'
-                  : telegramTestStatus === 'success'
-                  ? 'Dispatched to Telegram!'
-                  : 'Send Test Notification'}
+                {telegramTestStatus === "testing"
+                  ? "Dispatching Test..."
+                  : telegramTestStatus === "success"
+                    ? "Dispatched to Telegram!"
+                    : "Send Test Notification"}
               </span>
             </button>
           </div>
@@ -331,9 +574,13 @@ export default function AlertsPage() {
                 <span className="text-[10px] font-bold uppercase tracking-wider text-cyan-400 font-mono">
                   Official Warning Bulletin
                 </span>
-                <h3 className="text-lg font-bold text-white mt-1">{selectedAlert.title}</h3>
+                <h3 className="text-lg font-bold text-white mt-1">
+                  {selectedAlert.title}
+                </h3>
                 {selectedAlert.title_km && (
-                  <p className="text-xs text-slate-300 font-sans mt-0.5">{selectedAlert.title_km}</p>
+                  <p className="text-xs text-slate-300 font-sans mt-0.5">
+                    {selectedAlert.title_km}
+                  </p>
                 )}
               </div>
               <button
@@ -344,18 +591,33 @@ export default function AlertsPage() {
               </button>
             </div>
 
-            <div className="flex items-center gap-3 text-xs border border-navy-800/80 rounded-lg p-3 bg-navy-900/40">
+            <div className="flex items-center justify-between gap-3 text-xs border border-navy-800/80 rounded-lg p-3 bg-navy-900/40">
               <div>
-                <span className="text-slate-400 block text-[10px]">Location:</span>
-                <span className="font-semibold text-white">{selectedAlert.province}</span>
+                <span className="text-slate-400 block text-[10px]">
+                  Location:
+                </span>
+                <span className="font-semibold text-white">
+                  {selectedAlert.province || selectedAlert.location_name}
+                </span>
               </div>
               <div>
-                <span className="text-slate-400 block text-[10px]">Severity:</span>
-                <span className="font-semibold text-rose-400 uppercase">{selectedAlert.severity}</span>
+                <span className="text-slate-400 block text-[10px]">
+                  Severity:
+                </span>
+                <span className="font-semibold text-rose-400 uppercase">
+                  {selectedAlert.severity}
+                </span>
               </div>
               <div>
-                <span className="text-slate-400 block text-[10px]">Issued:</span>
-                <span className="text-slate-300">{new Date(selectedAlert.issued_at).toLocaleString()}</span>
+                <span className="text-slate-400 block text-[10px]">
+                  Issued:
+                </span>
+                <span className="text-slate-300">
+                  {new Date(
+                    selectedAlert.issued_at ||
+                      (selectedAlert as any).created_at,
+                  ).toLocaleString()}
+                </span>
               </div>
             </div>
 
@@ -381,7 +643,27 @@ export default function AlertsPage() {
               )}
             </div>
 
-            <div className="pt-2 flex justify-end">
+            <div className="pt-2 flex justify-end gap-2">
+              {selectedAlert.status === "active" && (
+                <button
+                  onClick={() =>
+                    handleUpdateStatus(selectedAlert.id, "acknowledge")
+                  }
+                  className="rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-500"
+                >
+                  Acknowledge
+                </button>
+              )}
+              {selectedAlert.status !== "resolved" && (
+                <button
+                  onClick={() =>
+                    handleUpdateStatus(selectedAlert.id, "resolve")
+                  }
+                  className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-500"
+                >
+                  Mark Resolved
+                </button>
+              )}
               <button
                 onClick={() => setSelectedAlert(null)}
                 className="rounded-lg bg-navy-800 px-4 py-1.5 text-xs font-medium text-white hover:bg-navy-700"
@@ -416,13 +698,17 @@ export default function AlertsPage() {
 
             <div className="grid grid-cols-2 gap-3 text-xs">
               <div>
-                <label className="block text-slate-400 mb-1">Target Province</label>
+                <label className="block text-slate-400 mb-1">
+                  Target Province
+                </label>
                 <select
                   value={newLocation}
                   onChange={(e) => setNewLocation(e.target.value)}
                   className="w-full rounded-lg border border-navy-700 bg-navy-900 px-3 py-2 text-slate-200 focus:border-cyan-500 focus:outline-none"
                 >
-                  {MONITORING_LOCATIONS.filter((l) => l.type === 'province').map((p) => (
+                  {MONITORING_LOCATIONS.filter(
+                    (l) => l.type === "province",
+                  ).map((p) => (
                     <option key={p.id} value={p.id}>
                       {p.name}
                     </option>
@@ -431,23 +717,31 @@ export default function AlertsPage() {
               </div>
 
               <div>
-                <label className="block text-slate-400 mb-1">Alert Severity</label>
+                <label className="block text-slate-400 mb-1">
+                  Alert Severity
+                </label>
                 <select
                   value={newSeverity}
-                  onChange={(e) => setNewSeverity(e.target.value as AlertSeverity)}
+                  onChange={(e) =>
+                    setNewSeverity(e.target.value as AlertSeverity)
+                  }
                   className="w-full rounded-lg border border-navy-700 bg-navy-900 px-3 py-2 text-slate-200 focus:border-cyan-500 focus:outline-none"
                 >
-                  <option value="warning">Warning (Orange)</option>
-                  <option value="danger">Danger (Red)</option>
-                  <option value="critical">Critical (Flash Hazard)</option>
-                  <option value="info">Informational</option>
+                  <option value="warning">Warning / Moderate (Orange)</option>
+                  <option value="danger">Danger / High (Red)</option>
+                  <option value="critical">
+                    Critical / Very High (Flash Hazard)
+                  </option>
+                  <option value="info">Informational / Low</option>
                 </select>
               </div>
             </div>
 
             <div className="space-y-3 text-xs">
               <div>
-                <label className="block text-slate-400 mb-1">Title (English)</label>
+                <label className="block text-slate-400 mb-1">
+                  Title (English)
+                </label>
                 <input
                   type="text"
                   required
@@ -459,7 +753,9 @@ export default function AlertsPage() {
               </div>
 
               <div>
-                <label className="block text-slate-400 mb-1">Title (Khmer)</label>
+                <label className="block text-slate-400 mb-1">
+                  Title (Khmer)
+                </label>
                 <input
                   type="text"
                   placeholder="ចំណងជើងជាភាសាខ្មែរ"
@@ -470,7 +766,9 @@ export default function AlertsPage() {
               </div>
 
               <div>
-                <label className="block text-slate-400 mb-1">Message (English)</label>
+                <label className="block text-slate-400 mb-1">
+                  Message (English)
+                </label>
                 <textarea
                   required
                   rows={3}
@@ -482,7 +780,9 @@ export default function AlertsPage() {
               </div>
 
               <div>
-                <label className="block text-slate-400 mb-1">Message (Khmer)</label>
+                <label className="block text-slate-400 mb-1">
+                  Message (Khmer)
+                </label>
                 <textarea
                   rows={2}
                   placeholder="ព័ត៌មានលម្អិតជាភាសាខ្មែរ..."
@@ -491,6 +791,18 @@ export default function AlertsPage() {
                   className="w-full rounded-lg border border-navy-700 bg-navy-900 px-3 py-2 text-slate-200 focus:border-cyan-500 focus:outline-none font-sans"
                 />
               </div>
+
+              <label className="flex items-center gap-2 text-slate-300 pt-1 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={broadcastTelegram}
+                  onChange={(e) => setBroadcastTelegram(e.target.checked)}
+                  className="rounded border-navy-700 bg-navy-900 text-cyan-500 focus:ring-cyan-500"
+                />
+                <span>
+                  Also broadcast this advisory to Telegram (@TonleSapFloodBot)
+                </span>
+              </label>
             </div>
 
             <div className="pt-3 border-t border-navy-800 flex items-center justify-end gap-2">
@@ -503,9 +815,10 @@ export default function AlertsPage() {
               </button>
               <button
                 type="submit"
-                className="rounded-lg bg-rose-600 px-4 py-2 text-xs font-semibold text-white hover:bg-rose-500"
+                disabled={submitting}
+                className="rounded-lg bg-rose-600 px-4 py-2 text-xs font-semibold text-white hover:bg-rose-500 disabled:opacity-50"
               >
-                Broadcast Alert
+                {submitting ? "Broadcasting..." : "Broadcast Alert"}
               </button>
             </div>
           </form>

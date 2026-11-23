@@ -12,6 +12,7 @@ import aiosqlite
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
+from app.config import settings
 from app.database import get_db
 from app.services.telegram import telegram_service
 from app.services.alert_service import alert_service
@@ -52,7 +53,10 @@ class CreateAlertRequest(BaseModel):
 
 
 class AcknowledgeRequest(BaseModel):
-    responder_name: str = Field("Provincial Disaster Management Committee", description="Official responder identifying name")
+    responder_name: str = Field(
+        "Provincial Disaster Management Committee",
+        description="Official responder identifying name",
+    )
     notes: Optional[str] = None
 
 
@@ -67,7 +71,7 @@ async def list_alerts(
     status: Optional[str] = Query(None, description="Filter by status: active, acknowledged, resolved"),
     location_id: Optional[int] = Query(None, description="Filter by location ID"),
     limit: int = Query(50, ge=1, le=200),
-    db: aiosqlite.Connection = Depends(get_db)
+    db: aiosqlite.Connection = Depends(get_db),
 ) -> List[AlertItem]:
     """
     List disaster alerts and early warning notifications with filtering options.
@@ -116,7 +120,7 @@ async def list_alerts(
             telegram_sent=bool(r["telegram_sent"]),
             created_at=r["created_at"],
             resolved_at=r["resolved_at"],
-            created_by=r["created_by"] or "system"
+            created_by=r["created_by"] or "system",
         )
         for r in rows
     ]
@@ -125,7 +129,7 @@ async def list_alerts(
 @router.post("", response_model=AlertItem, status_code=status.HTTP_201_CREATED)
 async def create_manual_alert(
     payload: CreateAlertRequest,
-    db: aiosqlite.Connection = Depends(get_db)
+    db: aiosqlite.Connection = Depends(get_db),
 ) -> AlertItem:
     """
     Manually dispatch an emergency broadcast alert across dashboard feeds and Telegram subscribers.
@@ -153,8 +157,8 @@ async def create_manual_alert(
             m_km,
             payload.location_id,
             payload.province,
-            now_iso
-        )
+            now_iso,
+        ),
     )
     new_id = cursor.lastrowid
     await db.commit()
@@ -170,20 +174,20 @@ async def create_manual_alert(
         "location_id": payload.location_id,
         "province": payload.province,
         "status": "active",
-        "created_at": now_iso
+        "created_at": now_iso,
     }
 
     telegram_sent = False
     if payload.broadcast_telegram and telegram_service.is_configured():
         tg_res = await telegram_service.send_alert(
             alert=alert_dict,
-            location_name=payload.province
+            location_name=payload.province,
         )
         if tg_res.get("success"):
             telegram_sent = True
             await db.execute(
                 "UPDATE alerts SET telegram_sent = 1, telegram_message_id = ? WHERE id = ?",
-                (str(tg_res.get("message_id")), new_id)
+                (str(tg_res.get("message_id")), new_id),
             )
             await db.commit()
 
@@ -212,7 +216,7 @@ async def create_manual_alert(
         telegram_sent=telegram_sent,
         created_at=now_iso,
         resolved_at=None,
-        created_by="admin"
+        created_by="admin",
     )
 
 
@@ -220,7 +224,7 @@ async def create_manual_alert(
 async def acknowledge_alert(
     alert_id: int,
     payload: Optional[AcknowledgeRequest] = None,
-    db: aiosqlite.Connection = Depends(get_db)
+    db: aiosqlite.Connection = Depends(get_db),
 ) -> Dict[str, Any]:
     """
     Acknowledge an active alert, confirming incident response is actively underway.
@@ -235,20 +239,24 @@ async def acknowledge_alert(
 
     await db.execute(
         """
-        UPDATE alerts 
-        SET status = 'acknowledged' 
+        UPDATE alerts
+        SET status = 'acknowledged'
         WHERE id = ?
         """,
-        (alert_id,)
+        (alert_id,),
     )
 
-    # Log in audit log
     await db.execute(
         """
         INSERT INTO audit_log (action, entity_type, entity_id, details_json, performed_by, created_at)
         VALUES ('ACKNOWLEDGE_ALERT', 'alert', ?, ?, ?, ?)
         """,
-        (str(alert_id), json.dumps({"responder": responder, "notes": payload.notes if payload else ""}), responder, now_iso)
+        (
+            str(alert_id),
+            json.dumps({"responder": responder, "notes": payload.notes if payload else ""}),
+            responder,
+            now_iso,
+        ),
     )
     await db.commit()
 
@@ -259,7 +267,7 @@ async def acknowledge_alert(
         "alert_id": alert_id,
         "new_status": "acknowledged",
         "acknowledged_by": responder,
-        "timestamp": now_iso
+        "timestamp": now_iso,
     }
 
 
@@ -267,7 +275,7 @@ async def acknowledge_alert(
 async def resolve_alert(
     alert_id: int,
     payload: Optional[ResolveRequest] = None,
-    db: aiosqlite.Connection = Depends(get_db)
+    db: aiosqlite.Connection = Depends(get_db),
 ) -> Dict[str, Any]:
     """
     Resolve an alert once flood waters recede and communities are confirmed safe.
@@ -283,20 +291,19 @@ async def resolve_alert(
 
     await db.execute(
         """
-        UPDATE alerts 
-        SET status = 'resolved', resolved_at = ? 
+        UPDATE alerts
+        SET status = 'resolved', resolved_at = ?
         WHERE id = ?
         """,
-        (now_iso, alert_id)
+        (now_iso, alert_id),
     )
 
-    # Audit log
     await db.execute(
         """
         INSERT INTO audit_log (action, entity_type, entity_id, details_json, performed_by, created_at)
         VALUES ('RESOLVE_ALERT', 'alert', ?, ?, ?, ?)
         """,
-        (str(alert_id), json.dumps({"notes": notes}), resolver, now_iso)
+        (str(alert_id), json.dumps({"notes": notes}), resolver, now_iso),
     )
     await db.commit()
 
@@ -307,7 +314,42 @@ async def resolve_alert(
         "alert_id": alert_id,
         "new_status": "resolved",
         "resolved_at": now_iso,
-        "resolved_by": resolver
+        "resolved_by": resolver,
+    }
+
+
+@router.post("/evaluate")
+async def evaluate_live_thresholds(
+    db: aiosqlite.Connection = Depends(get_db),
+) -> Dict[str, Any]:
+    """
+    Run live threshold evaluation across all monitoring locations and hydrological stations.
+    """
+    new_alerts = await alert_service.check_thresholds(db)
+    return {
+        "status": "completed",
+        "new_alerts_generated": len(new_alerts),
+        "alerts": new_alerts,
+    }
+
+
+@router.get("/telegram-status")
+async def get_telegram_status() -> Dict[str, Any]:
+    """
+    Return real Telegram bot configuration status without exposing the full token.
+    """
+    configured = telegram_service.is_configured()
+    raw_token = getattr(settings, "TELEGRAM_BOT_TOKEN", "") or ""
+    masked_token = (
+        f"{raw_token[:12]}*******************" if len(raw_token) > 12 else "Not Configured"
+    )
+    default_chat_id = str(getattr(settings, "TELEGRAM_CHAT_ID", "") or "")
+
+    return {
+        "connected": configured,
+        "bot_username": "@TonleSapFloodBot",
+        "masked_token": masked_token,
+        "default_chat_id": default_chat_id,
     }
 
 
