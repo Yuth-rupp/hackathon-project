@@ -1,0 +1,137 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "prek_kdam",
+        "code": "020102",
+        "name": "Prek Kdam",
+        "name_km": "ព្រែកក្ដាម",
+        "type": "hydrological",
+        "water_body": "Tonle Sap River",
+        "province": "Phnom Penh",
+        "data_source": "mrc",
+        "alarm_level": 9.5,
+        "flood_level": 10.0
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [104.8064, 11.8153]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "kampong_luong",
+        "code": "020106",
+        "name": "Kampong Luong",
+        "name_km": "កំពង់លួង",
+        "type": "hydrological",
+        "water_body": "Tonle Sap Lake",
+        "province": "Pursat",
+        "data_source": "mrc",
+        "alarm_level": 8.5,
+        "flood_level": 9.0
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [104.0486, 12.2539]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "kampong_thom",
+        "code": "610101",
+        "name": "Kampong Thom",
+        "name_km": "កំពង់ធំ",
+        "type": "hydrological",
+        "water_body": "Stung Sen River",
+        "province": "Kampong Thom",
+        "data_source": "mrc",
+        "alarm_level": 11.0,
+        "flood_level": 12.0
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [104.8886, 12.7114]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "siem_reap_weather",
+        "name": "Siem Reap",
+        "name_km": "សៀមរាប",
+        "type": "weather",
+        "province": "Siem Reap",
+        "data_source": "open-meteo"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [103.86, 13.36]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "battambang_weather",
+        "name": "Battambang",
+        "name_km": "បាត់ដំបង",
+        "type": "weather",
+        "province": "Battambang",
+        "data_source": "open-meteo"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [103.20, 13.10]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "pursat_weather",
+        "name": "Pursat",
+        "name_km": "ពោធិ៍សាត់",
+        "type": "weather",
+        "province": "Pursat",
+        "data_source": "open-meteo"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [103.92, 12.54]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "kampong_thom_weather",
+        "name": "Kampong Thom",
+        "name_km": "កំពង់ធំ",
+        "type": "weather",
+        "province": "Kampong Thom",
+        "data_source": "open-meteo"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [104.89, 12.71]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "kampong_chhnang_weather",
+        "name": "Kampong Chhnang",
+        "name_km": "កំពង់ឆ្នាំង",
+        "type": "weather",
+        "province": "Kampong Chhnang",
+        "data_source": "open-meteo"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [104.67, 12.25]
+      }
+    }
+  ]
+}

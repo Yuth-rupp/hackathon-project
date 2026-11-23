@@ -1,0 +1,116 @@
+/**
+ * Fetch river discharge forecasts for a monitoring location.
+ *
+ * Uses monitoring_locations.id, NOT stations.id.
+ * Does not generate fake fallback readings.
+ */
+import { Station, RiverDischarge } from "@/types";
+import { API_BASE_URL } from "@/lib/constants";
+
+export async function fetchRiverDischarge(
+  locationId: string | number,
+): Promise<RiverDischarge> {
+  const locationMap: Record<string, number> = {
+    "siem-reap": 1,
+    battambang: 2,
+    pursat: 3,
+    "kampong-thom": 4,
+    "kampong-chhnang": 5,
+  };
+
+  const key = String(locationId);
+  const numericId = locationMap[key] ?? Number(key);
+
+  if (!Number.isInteger(numericId) || numericId < 1) {
+    throw new Error(`Invalid discharge monitoring location: ${key}`);
+  }
+
+  const response = await fetch(
+    `${API_BASE_URL}/hydrology/discharge?location_id=${numericId}`,
+    { cache: "no-store" },
+  );
+
+  if (!response.ok) {
+    throw new Error(
+      `Failed to fetch discharge forecast: HTTP ${response.status}`,
+    );
+  }
+
+  const data = await response.json();
+
+  return {
+    location_id: data.location_id,
+    location_name: data.location_name,
+    province: data.province ?? null,
+    current_discharge_m3s: data.current_discharge_m3s ?? null,
+    historical_mean_m3s: data.historical_mean_m3s ?? null,
+    anomaly_pct: data.anomaly_pct ?? null,
+    flow_status: data.flow_status ?? "UNKNOWN",
+
+    forecast: (data.forecast ?? []).map((item: any) => ({
+      date: item.date,
+      discharge_m3s: item.discharge_m3s ?? null,
+      discharge_max: item.discharge_max ?? null,
+      discharge_mean: item.discharge_mean ?? null,
+      discharge_median: item.discharge_median ?? null,
+      data_source: item.data_source ?? null,
+    })),
+
+    data_sources: data.data_sources ?? [],
+    updated_at: data.updated_at ?? null,
+  };
+}
+
+export async function fetchHydrologyStations(): Promise<Station[]> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/hydrology/stations`, {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+      },
+      cache: "no-store",
+    });
+
+    if (!response.ok) {
+      throw new Error(
+        `Failed to fetch hydrology stations: HTTP ${response.status}`,
+      );
+    }
+
+    const data = await response.json();
+
+    if (!Array.isArray(data)) {
+      throw new Error("Invalid hydrology stations response.");
+    }
+
+    return data.map(
+      (station: any): Station => ({
+        id: String(station.id),
+        code: String(station.code),
+        name: station.name,
+        name_km: station.name_km ?? null,
+        type: station.type ?? null,
+        province: station.province ?? null,
+        district: station.district ?? null,
+        river: station.water_body ?? null,
+        water_body: station.water_body ?? null,
+        lat: Number(station.lat),
+        lon: Number(station.lon),
+        elevation: station.elevation ?? null,
+        data_source: station.data_source ?? null,
+        water_level_m: station.current_water_level ?? null,
+        alarm_level_m: station.alarm_level ?? null,
+        flood_level_m: station.flood_level ?? null,
+        last_reading_time: station.latest_reading_time ?? null,
+        is_active: Boolean(station.is_active),
+        status: station.status ?? "NO_DATA",
+        pulse_flow_status: station.pulse_flow_status ?? null,
+        discharge_m3s: null,
+        trend: "unknown",
+      }),
+    );
+  } catch (error) {
+    console.error("Hydrology stations fetch error:", error);
+    throw error;
+  }
+}

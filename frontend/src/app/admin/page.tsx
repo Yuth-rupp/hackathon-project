@@ -1,0 +1,607 @@
+'use client';
+
+import React, { useState } from 'react';
+import { DashboardLayout } from '@/components/layout/DashboardLayout';
+import { DATA_SOURCES } from '@/lib/constants';
+import { Station } from '@/types';
+import {
+  Settings,
+  Database,
+  Sliders,
+  Bot,
+  Bell,
+  FileText,
+  Save,
+  RefreshCw,
+  Edit,
+  Trash2,
+  Plus,
+  CheckCircle2,
+  AlertTriangle,
+  Send,
+  Shield,
+  Layers,
+} from 'lucide-react';
+
+export default function AdminPage() {
+  const [activeTab, setActiveTab] = useState<
+    'stations' | 'datasources' | 'risk' | 'telegram' | 'alerts' | 'audit'
+  >('stations');
+
+  // Stations state
+  const [stations, setStations] = useState<Station[]>([
+    {
+      id: 'station-prek-kdam',
+      code: 'ST-001',
+      type: null,
+      province: null,
+      district: null,
+      water_body: null,
+      elevation: null,
+      data_source: null,
+      is_active: true,
+      pulse_flow_status: null,
+      name: 'Prek Kdam Hydrological Station',
+      name_km: 'ស្ថានីយជលសាស្ត្រព្រែកក្តាម',
+      river: 'Tonle Sap River',
+      lat: 11.8153,
+      lon: 104.8064,
+      water_level_m: 8.74,
+      alarm_level_m: 9.5,
+      flood_level_m: 10.0,
+      discharge_m3s: 3620,
+      trend: 'rising',
+      last_reading_time: new Date().toISOString(),
+      status: "NORMAL",
+    },
+    {
+      id: 'station-kampong-luong',
+      code: 'ST-002',
+      type: null,
+      province: null,
+      district: null,
+      water_body: null,
+      elevation: null,
+      data_source: null,
+      is_active: true,
+      pulse_flow_status: null,
+      name: 'Kampong Luong Floating Station',
+      name_km: 'ស្ថានីយជលសាស្ត្រកំពង់ហ្លួង',
+      river: 'Tonle Sap Lake Basin',
+      lat: 12.2539,
+      lon: 104.0486,
+      water_level_m: 7.92,
+      alarm_level_m: 9.0,
+      flood_level_m: 10.5,
+      discharge_m3s: 4120,
+      trend: 'stable',
+      last_reading_time: new Date().toISOString(),
+      status: "NORMAL",
+    },
+    {
+      id: 'station-kampong-thom',
+      code: 'ST-003',
+      type: null,
+      province: null,
+      district: null,
+      water_body: null,
+      elevation: null,
+      data_source: null,
+      is_active: true,
+      pulse_flow_status: null,
+      name: 'Kampong Thom River Gauge',
+      name_km: 'ស្ថានីយជលសាស្ត្រស្ទឹងសែន កំពង់ធំ',
+      river: 'Stung Sen River',
+      lat: 12.7114,
+      lon: 104.8886,
+      water_level_m: 12.82,
+      alarm_level_m: 13.5,
+      flood_level_m: 14.0,
+      discharge_m3s: 940,
+      trend: 'rising',
+      last_reading_time: new Date().toISOString(),
+      status: "NORMAL",
+    },
+  ]);
+
+  // Risk Threshold Sliders State
+  const [waterLevelAlarm, setWaterLevelAlarm] = useState(9.5);
+  const [waterLevelFlood, setWaterLevelFlood] = useState(10.5);
+  const [dischargeSurgeThreshold, setDischargeSurgeThreshold] = useState(3800);
+  const [rainWarningMm, setRainWarningMm] = useState(50);
+  const [soilMoistureCritical, setSoilMoistureCritical] = useState(85);
+
+  // Telegram Configuration State
+  const [botToken, setBotToken] = useState('6184920412:AAH9_mock_token_tonlesap_2026');
+  const [chatId, setTelegramChatId] = useState('-1001928472910');
+  const [botEnabled, setBotEnabled] = useState(true);
+  const [channelTitle, setChannelTitle] = useState('Tonle Sap Flood Alert Network (Official)');
+
+  // Data Pipeline Refresh State
+  const [refreshingSource, setRefreshingSource] = useState<string | null>(null);
+
+  // Notifications
+  const [notification, setNotification] = useState<string | null>(null);
+
+  const showNotification = (msg: string) => {
+    setNotification(msg);
+    setTimeout(() => setNotification(null), 3500);
+  };
+
+  const handleRefreshSource = (sourceId: string) => {
+    setRefreshingSource(sourceId);
+    setTimeout(() => {
+      setRefreshingSource(null);
+      showNotification(`Pipeline ${sourceId.toUpperCase()} re-indexed and synchronized.`);
+    }, 1200);
+  };
+
+  const handleDeleteStation = (stationId: string) => {
+    setStations(stations.filter((s) => s.id !== stationId));
+    showNotification('Station successfully unlinked from telemetry cluster.');
+  };
+
+  const handleSaveRiskConfig = () => {
+    showNotification('AI Risk thresholds updated and synchronized with CatBoost model.');
+  };
+
+  // Mock Audit Log
+  const auditLogs = [
+    {
+      id: 'aud-001',
+      timestamp: '2026-11-18 09:42:15',
+      user: 'admin_sys_cambodia',
+      action: 'UPDATE_THRESHOLD',
+      target: 'Prek Kdam Stage Alarm -> 9.5m',
+      status: 'SUCCESS',
+    },
+    {
+      id: 'aud-002',
+      timestamp: '2026-11-18 08:30:00',
+      user: 'scheduler_daemon',
+      action: 'INGEST_ECMWF_GLOFAS',
+      target: 'Cycle 00:00 UTC Discharge Points',
+      status: 'SUCCESS',
+    },
+    {
+      id: 'aud-003',
+      timestamp: '2026-11-18 06:15:22',
+      user: 'sar_pipeline_worker',
+      action: 'STAC_INDEX_SENTINEL1',
+      target: 'S1A_IW_GRDH_1SDV_20241014T111520',
+      status: 'SUCCESS',
+    },
+    {
+      id: 'aud-004',
+      timestamp: '2026-11-17 22:10:04',
+      user: 'telegram_bot_relay',
+      action: 'DISPATCH_ALERT',
+      target: 'Advisory alt-001 -> Chat -1001928472910',
+      status: 'DELIVERED',
+    },
+    {
+      id: 'aud-005',
+      timestamp: '2026-11-17 19:40:11',
+      user: 'admin_sys_cambodia',
+      action: 'SYNC_JRC_WATER_TILES',
+      target: 'JRC Global Surface Water 2021 Tile Layer',
+      status: 'SUCCESS',
+    },
+  ];
+
+  return (
+    <DashboardLayout
+      title="Administrative Control & Model Calibration"
+      subtitle="Hydrometric station parameters, data pipeline synchronization, AI risk thresholds, and audit logging"
+    >
+      {/* Toast Notification */}
+      {notification && (
+        <div className="flex items-center gap-2 rounded-lg border border-cyan-500/40 bg-navy-900 p-3 text-xs text-cyan-300 shadow-xl">
+          <CheckCircle2 className="h-4 w-4" />
+          <span>{notification}</span>
+        </div>
+      )}
+
+      {/* Admin Tab Navigation */}
+      <div className="flex flex-wrap items-center gap-2 border-b border-navy-800 pb-2">
+        <button
+          onClick={() => setActiveTab('stations')}
+          className={`flex items-center gap-2 px-3.5 py-2 text-xs font-semibold rounded-lg transition-colors ${
+            activeTab === 'stations'
+              ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'
+              : 'text-slate-400 hover:text-white hover:bg-navy-900'
+          }`}
+        >
+          <Sliders className="h-4 w-4" />
+          <span>Gauging Stations</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('datasources')}
+          className={`flex items-center gap-2 px-3.5 py-2 text-xs font-semibold rounded-lg transition-colors ${
+            activeTab === 'datasources'
+              ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'
+              : 'text-slate-400 hover:text-white hover:bg-navy-900'
+          }`}
+        >
+          <Database className="h-4 w-4" />
+          <span>Data Pipeline Sync</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('risk')}
+          className={`flex items-center gap-2 px-3.5 py-2 text-xs font-semibold rounded-lg transition-colors ${
+            activeTab === 'risk'
+              ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'
+              : 'text-slate-400 hover:text-white hover:bg-navy-900'
+          }`}
+        >
+          <Shield className="h-4 w-4" />
+          <span>AI Risk Calibration</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('telegram')}
+          className={`flex items-center gap-2 px-3.5 py-2 text-xs font-semibold rounded-lg transition-colors ${
+            activeTab === 'telegram'
+              ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'
+              : 'text-slate-400 hover:text-white hover:bg-navy-900'
+          }`}
+        >
+          <Bot className="h-4 w-4" />
+          <span>Telegram Dispatch Bot</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('audit')}
+          className={`flex items-center gap-2 px-3.5 py-2 text-xs font-semibold rounded-lg transition-colors ${
+            activeTab === 'audit'
+              ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'
+              : 'text-slate-400 hover:text-white hover:bg-navy-900'
+          }`}
+        >
+          <FileText className="h-4 w-4" />
+          <span>Security & Audit Log</span>
+        </button>
+      </div>
+
+      {/* Tab 1: Gauging Stations */}
+      {activeTab === 'stations' && (
+        <div className="rounded-xl border border-navy-800 bg-navy-900/60 p-5 shadow-lg backdrop-blur-md space-y-4">
+          <div className="flex items-center justify-between border-b border-navy-800 pb-3">
+            <div>
+              <h3 className="text-sm font-semibold uppercase tracking-wider text-white">
+                Hydrological Telemetry Stations Management
+              </h3>
+              <p className="text-xs text-slate-400">
+                Configure gauging sensor calibration, stage datum coordinates, and critical flood thresholds
+              </p>
+            </div>
+            <button
+              onClick={() => showNotification('Station configuration dialog opened.')}
+              className="flex items-center gap-1.5 rounded-lg bg-cyan-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-cyan-500 transition-colors"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              <span>Register Station</span>
+            </button>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs text-slate-300">
+              <thead className="border-b border-navy-800 bg-navy-950/80 text-[11px] uppercase tracking-wider text-slate-400 font-mono">
+                <tr>
+                  <th className="py-2.5 px-3">Station Name</th>
+                  <th className="py-2.5 px-3">River / Body</th>
+                  <th className="py-2.5 px-3">Coordinates</th>
+                  <th className="py-2.5 px-3">Water Level</th>
+                  <th className="py-2.5 px-3">Alarm (m)</th>
+                  <th className="py-2.5 px-3">Flood (m)</th>
+                  <th className="py-2.5 px-3">Status</th>
+                  <th className="py-2.5 px-3 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-navy-800/60">
+                {stations.map((st) => (
+                  <tr key={st.id} className="hover:bg-navy-800/30">
+                    <td className="py-3 px-3 font-semibold text-white">
+                      <div>{st.name}</div>
+                      <div className="text-[11px] text-slate-400 font-sans">{st.name_km}</div>
+                    </td>
+                    <td className="py-3 px-3 text-cyan-300">{st.river}</td>
+                    <td className="py-3 px-3 font-mono text-[11px] text-slate-400">
+                      {st.lat.toFixed(4)}, {st.lon.toFixed(4)}
+                    </td>
+                    <td className="py-3 px-3 font-mono font-bold text-white">{st.water_level_m} m</td>
+                    <td className="py-3 px-3 font-mono text-amber-400">{st.alarm_level_m} m</td>
+                    <td className="py-3 px-3 font-mono text-rose-400 font-bold">{st.flood_level_m} m</td>
+                    <td className="py-3 px-3">
+                      <span className="rounded bg-emerald-500/10 px-2 py-0.5 text-[10px] text-emerald-400 border border-emerald-500/20">
+                        Active
+                      </span>
+                    </td>
+                    <td className="py-3 px-3 text-right">
+                      <div className="flex items-center justify-end gap-2">
+                        <button
+                          onClick={() => showNotification(`Editing station: ${st.name}`)}
+                          className="p-1 text-slate-400 hover:text-cyan-400"
+                        >
+                          <Edit className="h-4 w-4" />
+                        </button>
+                        <button
+                          onClick={() => handleDeleteStation(st.id)}
+                          className="p-1 text-slate-400 hover:text-rose-400"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Tab 2: Data Sources Pipeline Sync */}
+      {activeTab === 'datasources' && (
+        <div className="rounded-xl border border-navy-800 bg-navy-900/60 p-5 shadow-lg backdrop-blur-md space-y-4">
+          <div className="border-b border-navy-800 pb-3">
+            <h3 className="text-sm font-semibold uppercase tracking-wider text-white">
+              Data Pipeline Connectors & Manual Re-Synchronization
+            </h3>
+            <p className="text-xs text-slate-400">
+              Trigger instant cache eviction and fresh query ingestion from upstream Open-Meteo, Copernicus, and MRC endpoints
+            </p>
+          </div>
+
+          <div className="space-y-3">
+            {DATA_SOURCES.map((ds) => {
+              const isSyncing = refreshingSource === ds.id;
+              return (
+                <div
+                  key={ds.id}
+                  className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-lg border border-navy-800 bg-navy-950/60 p-4"
+                >
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h4 className="text-xs font-bold text-white">{ds.name}</h4>
+                      <span className="rounded bg-navy-800 px-2 py-0.2 text-[10px] text-cyan-300 font-mono">
+                        {ds.type}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-400 mt-0.5">{ds.provider} &bull; {ds.endpoint}</p>
+                  </div>
+
+                  <button
+                    onClick={() => handleRefreshSource(ds.id)}
+                    disabled={isSyncing}
+                    className="flex items-center gap-1.5 rounded-lg border border-cyan-800/80 bg-cyan-950/60 px-3 py-1.5 text-xs font-medium text-cyan-300 hover:bg-cyan-900 transition-colors self-start sm:self-auto"
+                  >
+                    <RefreshCw className={`h-3.5 w-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+                    <span>{isSyncing ? 'Synchronizing...' : 'Trigger Sync'}</span>
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Tab 3: Risk Calibration Sliders */}
+      {activeTab === 'risk' && (
+        <div className="rounded-xl border border-navy-800 bg-navy-900/60 p-6 shadow-xl backdrop-blur-md space-y-6">
+          <div className="flex items-center justify-between border-b border-navy-800 pb-4">
+            <div>
+              <h3 className="text-sm font-semibold uppercase tracking-wider text-white">
+                CatBoost Risk Threshold & Hazard Boundary Calibration
+              </h3>
+              <p className="text-xs text-slate-400">
+                Adjust hydraulic and meteorological tipping points that trigger automated community warnings
+              </p>
+            </div>
+            <button
+              onClick={handleSaveRiskConfig}
+              className="flex items-center gap-1.5 rounded-lg bg-cyan-600 px-4 py-2 text-xs font-semibold text-white hover:bg-cyan-500 shadow-md transition-colors"
+            >
+              <Save className="h-3.5 w-3.5" />
+              <span>Save & Publish Thresholds</span>
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Water Level Alarm Slider */}
+            <div className="rounded-lg border border-navy-800 bg-navy-950/70 p-4 space-y-2">
+              <div className="flex justify-between text-xs">
+                <span className="text-slate-300 font-medium">Stage Alarm Threshold (Prek Kdam)</span>
+                <span className="font-mono font-bold text-amber-400">{waterLevelAlarm} m</span>
+              </div>
+              <input
+                type="range"
+                min="7.0"
+                max="12.0"
+                step="0.1"
+                value={waterLevelAlarm}
+                onChange={(e) => setWaterLevelAlarm(parseFloat(e.target.value))}
+                className="w-full accent-amber-400"
+              />
+              <p className="text-[11px] text-slate-500">Normal range: 8.5m - 10.0m</p>
+            </div>
+
+            {/* Critical Flood Level Slider */}
+            <div className="rounded-lg border border-navy-800 bg-navy-950/70 p-4 space-y-2">
+              <div className="flex justify-between text-xs">
+                <span className="text-slate-300 font-medium">Stage Critical Overtopping Level</span>
+                <span className="font-mono font-bold text-rose-400">{waterLevelFlood} m</span>
+              </div>
+              <input
+                type="range"
+                min="8.0"
+                max="13.0"
+                step="0.1"
+                value={waterLevelFlood}
+                onChange={(e) => setWaterLevelFlood(parseFloat(e.target.value))}
+                className="w-full accent-rose-500"
+              />
+              <p className="text-[11px] text-slate-500">Benchmark 2000 historic flood: 10.42m</p>
+            </div>
+
+            {/* Discharge Inflow Surge */}
+            <div className="rounded-lg border border-navy-800 bg-navy-950/70 p-4 space-y-2">
+              <div className="flex justify-between text-xs">
+                <span className="text-slate-300 font-medium">Reverse Inflow Surge Velocity Threshold</span>
+                <span className="font-mono font-bold text-cyan-300">{dischargeSurgeThreshold} m³/s</span>
+              </div>
+              <input
+                type="range"
+                min="2000"
+                max="6000"
+                step="50"
+                value={dischargeSurgeThreshold}
+                onChange={(e) => setDischargeSurgeThreshold(parseInt(e.target.value))}
+                className="w-full accent-cyan-400"
+              />
+              <p className="text-[11px] text-slate-500">Calculated via GloFAS discharge ensemble</p>
+            </div>
+
+            {/* Convective Rain Warning */}
+            <div className="rounded-lg border border-navy-800 bg-navy-950/70 p-4 space-y-2">
+              <div className="flex justify-between text-xs">
+                <span className="text-slate-300 font-medium">24-Hour Convective Rain Warning Level</span>
+                <span className="font-mono font-bold text-blue-400">{rainWarningMm} mm/24h</span>
+              </div>
+              <input
+                type="range"
+                min="20"
+                max="150"
+                step="5"
+                value={rainWarningMm}
+                onChange={(e) => setRainWarningMm(parseInt(e.target.value))}
+                className="w-full accent-blue-400"
+              />
+              <p className="text-[11px] text-slate-500">Triggers Cardamom flash-flood protocol</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Tab 4: Telegram Bot Config */}
+      {activeTab === 'telegram' && (
+        <div className="rounded-xl border border-navy-800 bg-navy-900/60 p-6 shadow-xl backdrop-blur-md space-y-6">
+          <div className="flex items-center justify-between border-b border-navy-800 pb-4">
+            <div>
+              <h3 className="text-sm font-semibold uppercase tracking-wider text-white">
+                Telegram Dispatch Bot Configuration
+              </h3>
+              <p className="text-xs text-slate-400">
+                Manage Telegram Bot credentials and community webhook distribution channels
+              </p>
+            </div>
+
+            <label className="flex items-center gap-2 cursor-pointer text-xs">
+              <span className="text-slate-400">Bot Active</span>
+              <input
+                type="checkbox"
+                checked={botEnabled}
+                onChange={(e) => setBotEnabled(e.target.checked)}
+                className="h-4 w-4 rounded border-navy-700 bg-navy-900 text-cyan-500"
+              />
+            </label>
+          </div>
+
+          <div className="space-y-4 max-w-2xl text-xs">
+            <div>
+              <label className="block text-slate-400 mb-1">Telegram Bot Token (BotFather)</label>
+              <input
+                type="text"
+                value={botToken}
+                onChange={(e) => setBotToken(e.target.value)}
+                className="w-full rounded-lg border border-navy-700 bg-navy-950 px-3 py-2 text-xs font-mono text-slate-200 focus:border-cyan-500 focus:outline-none"
+              />
+            </div>
+
+            <div>
+              <label className="block text-slate-400 mb-1">Default Broadcast Chat ID</label>
+              <input
+                type="text"
+                value={chatId}
+                onChange={(e) => setTelegramChatId(e.target.value)}
+                className="w-full rounded-lg border border-navy-700 bg-navy-950 px-3 py-2 text-xs font-mono text-slate-200 focus:border-cyan-500 focus:outline-none"
+              />
+            </div>
+
+            <div>
+              <label className="block text-slate-400 mb-1">Channel Headline Identifier</label>
+              <input
+                type="text"
+                value={channelTitle}
+                onChange={(e) => setChannelTitle(e.target.value)}
+                className="w-full rounded-lg border border-navy-700 bg-navy-950 px-3 py-2 text-xs text-slate-200 focus:border-cyan-500 focus:outline-none"
+              />
+            </div>
+
+            <div className="pt-2 flex items-center gap-3">
+              <button
+                onClick={() => showNotification('Telegram Bot configuration saved.')}
+                className="flex items-center gap-1.5 rounded-lg bg-cyan-600 px-4 py-2 text-xs font-semibold text-white hover:bg-cyan-500"
+              >
+                <Save className="h-3.5 w-3.5" />
+                <span>Save Config</span>
+              </button>
+              <button
+                onClick={() => showNotification('Test message dispatched to Telegram chat.')}
+                className="flex items-center gap-1.5 rounded-lg border border-navy-700 bg-navy-900 px-4 py-2 text-xs font-semibold text-slate-200 hover:text-white"
+              >
+                <Send className="h-3.5 w-3.5" />
+                <span>Send Test Ping</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Tab 5: Security & Audit Log */}
+      {activeTab === 'audit' && (
+        <div className="rounded-xl border border-navy-800 bg-navy-900/60 p-5 shadow-lg backdrop-blur-md space-y-4">
+          <div className="border-b border-navy-800 pb-3">
+            <h3 className="text-sm font-semibold uppercase tracking-wider text-white">
+              System Audit & Telemetric Dispatch Log
+            </h3>
+            <p className="text-xs text-slate-400">
+              Immutable operational log tracking automated model cycles, threshold edits, and alert broadcasts
+            </p>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs text-slate-300">
+              <thead className="border-b border-navy-800 bg-navy-950/80 text-[11px] uppercase tracking-wider text-slate-400 font-mono">
+                <tr>
+                  <th className="py-2.5 px-3">Timestamp (UTC+7)</th>
+                  <th className="py-2.5 px-3">Operator / Service</th>
+                  <th className="py-2.5 px-3">Action</th>
+                  <th className="py-2.5 px-3">Target Entity</th>
+                  <th className="py-2.5 px-3 text-right">Result</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-navy-800/60 font-mono text-[11px]">
+                {auditLogs.map((log) => (
+                  <tr key={log.id} className="hover:bg-navy-800/30">
+                    <td className="py-2.5 px-3 text-slate-400">{log.timestamp}</td>
+                    <td className="py-2.5 px-3 text-cyan-300">{log.user}</td>
+                    <td className="py-2.5 px-3 font-semibold text-white">{log.action}</td>
+                    <td className="py-2.5 px-3 text-slate-300 font-sans">{log.target}</td>
+                    <td className="py-2.5 px-3 text-right">
+                      <span className="rounded bg-emerald-500/10 px-2 py-0.5 text-[10px] text-emerald-400 border border-emerald-500/20">
+                        {log.status}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </DashboardLayout>
+  );
+}

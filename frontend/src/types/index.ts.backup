@@ -1,0 +1,364 @@
+import { MonitoringLocation } from "@/lib/constants";
+
+export type { MonitoringLocation };
+
+// ============================================================
+// GENERAL SYSTEM TYPES
+// ============================================================
+
+export type RiskLevel = "low" | "moderate" | "high" | "very_high";
+
+export type FlowDirection = "reverse_inflow" | "normal_outflow" | "slack";
+
+export type AlertSeverity = "info" | "warning" | "danger" | "critical";
+
+export type SystemStatus = "operational" | "nominal" | "degraded" | "offline";
+
+// ============================================================
+// DASHBOARD KPI
+// ============================================================
+
+export interface DashboardKPIs {
+  water_level_m: number;
+  water_level_anomaly_m: number;
+  inundation_area_km2: number;
+  inundation_change_pct: number;
+  lake_volume_bcm: number;
+  flow_direction: FlowDirection;
+  flow_rate_m3s: number;
+  active_alerts_count: number;
+  highest_risk_province: string;
+  highest_risk_level: RiskLevel;
+  last_updated: string;
+}
+
+// ============================================================
+// WEATHER
+// Real Open-Meteo weather observations and forecasts
+// ============================================================
+
+export interface WeatherData {
+  location_id: string;
+  location_name: string;
+
+  temperature_c: number | null;
+  precipitation_mm: number | null;
+  precipitation_probability_pct: number | null;
+  humidity_pct: number | null;
+  wind_speed_kmh: number | null;
+  wind_direction_deg: number | null;
+  cloud_cover_pct: number | null;
+
+  weather_code: number | null;
+  weather_description: string;
+
+  timestamp: string;
+  data_source: string;
+  timezone: string;
+}
+
+export interface WeatherDailyForecast {
+  date: string;
+
+  temperature_max: number | null;
+  temperature_min: number | null;
+
+  precipitation_sum_mm: number | null;
+  precipitation_probability_max: number | null;
+
+  weather_code: number | null;
+  weather_description: string;
+
+  wind_speed_max_kmh: number | null;
+}
+
+export interface WeatherHourlyForecast {
+  time: string;
+
+  temperature_c: number | null;
+  precipitation_mm: number | null;
+  precipitation_probability_pct: number | null;
+  relative_humidity_pct: number | null;
+
+  soil_moisture_0_7cm: number | null;
+  soil_moisture_7_28cm: number | null;
+  soil_moisture_28_100cm: number | null;
+}
+
+export interface WeatherForecast {
+  location_id: string;
+  location_name: string;
+
+  daily: WeatherDailyForecast[];
+  hourly: WeatherHourlyForecast[];
+
+  generated_at: string;
+  data_source: string;
+  timezone: string;
+}
+
+export interface HistoricalRainfall {
+  location_id: string;
+  location_name: string;
+
+  rainfall_30d_mm: number | null;
+
+  start_date: string;
+  end_date: string;
+
+  data_source: string;
+  retrieved_at: string;
+}
+
+// ============================================================
+// RIVER DISCHARGE MONITORING
+// Separate from hydrological gauge stations.
+//
+// Data source table:
+// monitoring_locations + river_discharge
+// ============================================================
+
+export interface DischargeForecastPoint {
+  date: string;
+
+  discharge_m3s: number | null;
+  discharge_max: number | null;
+  discharge_mean: number | null;
+  discharge_median: number | null;
+
+  data_source: string | null;
+}
+
+export type DischargeFlowStatus =
+  | "NORMAL"
+  | "HIGH"
+  | "LOW"
+  | "UNKNOWN"
+  | "NO_DATA";
+
+export interface RiverDischarge {
+  location_id: number;
+  location_name: string;
+  province: string | null;
+
+  current_discharge_m3s: number | null;
+  historical_mean_m3s: number | null;
+  anomaly_pct: number | null;
+
+  flow_status: DischargeFlowStatus;
+
+  forecast: DischargeForecastPoint[];
+
+  data_sources: string[];
+  updated_at: string | null;
+}
+
+// ============================================================
+// HYDROLOGICAL GAUGE STATIONS
+// Separate from discharge monitoring locations.
+//
+// Data source tables:
+// stations + water_levels
+// ============================================================
+
+export type HydrologyStationStatus =
+  | "NORMAL"
+  | "WARNING"
+  | "CRITICAL_FLOOD"
+  | "NO_DATA";
+
+export interface Station {
+  id: string;
+  code: string;
+
+  name: string;
+  name_km: string | null;
+
+  type: string | null;
+  province: string | null;
+  district: string | null;
+
+  river: string | null;
+  water_body: string | null;
+
+  lat: number;
+  lon: number;
+
+  elevation: number | null;
+
+  data_source: string | null;
+
+  water_level_m: number | null;
+  alarm_level_m: number | null;
+  flood_level_m: number | null;
+
+  last_reading_time: string | null;
+
+  is_active: boolean;
+
+  status: HydrologyStationStatus;
+
+  pulse_flow_status: string | null;
+
+  // Optional compatibility fields for older UI components.
+  discharge_m3s?: number | null;
+  trend?: "rising" | "falling" | "stable" | "unknown";
+}
+
+// ============================================================
+// HYDROLOGY TIME SERIES
+// ============================================================
+
+export interface HydrologyTimeSeriesPoint {
+  timestamp: string;
+  water_level_m: number | null;
+  discharge_m3s: number | null;
+  quality_flag: string;
+}
+
+export interface HydrologyStationComparison {
+  station_id: number;
+  station_code: string;
+  station_name: string;
+  river_name: string | null;
+  timeseries: HydrologyTimeSeriesPoint[];
+}
+
+// ============================================================
+// RISK ASSESSMENT
+// ============================================================
+
+export interface RiskAssessment {
+  id: string;
+  location_id: string;
+  location_name: string;
+  location_name_km?: string;
+
+  province: string;
+
+  risk_level: RiskLevel;
+  risk_score: number;
+
+  hazard_score: number;
+  vulnerability_score: number;
+  exposure_score: number;
+
+  primary_driver: string;
+  factors: string[];
+  recommended_actions: string[];
+
+  confidence_pct: number;
+  timestamp: string;
+}
+
+// ============================================================
+// ALERTS
+// ============================================================
+
+export interface Alert {
+  id: string;
+
+  severity: AlertSeverity;
+
+  title: string;
+  title_km?: string;
+
+  message: string;
+  message_km?: string;
+
+  location_id: string;
+  location_name: string;
+  province: string;
+
+  category: "flood" | "hydrology" | "extreme_weather" | "infrastructure";
+
+  issued_at: string;
+  expires_at: string;
+
+  status: "active" | "resolved";
+}
+
+// ============================================================
+// SATELLITE DATA
+// ============================================================
+
+export interface SatelliteAcquisition {
+  id: string;
+
+  satellite: "Sentinel-1" | "Sentinel-2" | "Landsat-8" | "Landsat-9";
+
+  date: string;
+  instrument: string;
+
+  orbit_direction?: "ASCENDING" | "DESCENDING";
+  polarization?: string;
+
+  cloud_cover_pct: number;
+  water_extent_km2: number;
+
+  thumbnail_url: string;
+  download_url: string;
+
+  bbox: [number, number, number, number];
+}
+
+// ============================================================
+// DATA SOURCES
+// ============================================================
+
+export interface DataSource {
+  id: string;
+  name: string;
+  provider: string;
+  type: string;
+  updateFrequency: string;
+  description: string;
+  endpoint: string;
+
+  status: "operational" | "nominal" | "degraded";
+
+  lastPingMs?: number;
+}
+
+// ============================================================
+// HISTORICAL FLOOD EVENTS
+// ============================================================
+
+export interface FloodEvent {
+  id: string;
+  year: number;
+  title: string;
+
+  provinces_affected: string[];
+
+  peak_water_level_m: number;
+  estimated_damage_usd: number;
+  affected_population: number;
+  duration_days: number;
+
+  summary: string;
+  significance: string;
+}
+
+// ============================================================
+// COMMUNITY PROFILES
+// ============================================================
+
+export interface CommunityProfile {
+  province: string;
+  province_km: string;
+
+  population: number;
+
+  floating_villages_count: number;
+  vulnerable_households: number;
+  evacuation_shelters_count: number;
+
+  main_livelihoods: string[];
+
+  flood_preparedness_score: number;
+
+  safe_zone_elevation_m: number;
+
+  contact_hotline: string;
+}

@@ -1,0 +1,70 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Siem Reap",
+        "name_km": "សៀមរាប",
+        "code": "KH-17",
+        "pcode": "KH17"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[103.25, 13.1], [104.5, 13.1], [104.5, 14.2], [103.9, 14.2], [103.25, 13.9], [103.25, 13.1]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Battambang",
+        "name_km": "បាត់ដំបង",
+        "code": "KH-02",
+        "pcode": "KH02"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[102.5, 12.6], [103.4, 12.6], [103.4, 13.6], [102.9, 13.6], [102.5, 13.3], [102.5, 12.6]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Pursat",
+        "name_km": "ពោធិ៍សាត់",
+        "code": "KH-15",
+        "pcode": "KH15"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[102.7, 11.8], [104.1, 11.8], [104.1, 12.7], [103.4, 12.7], [102.7, 12.5], [102.7, 11.8]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Kampong Thom",
+        "name_km": "កំពង់ធំ",
+        "code": "KH-06",
+        "pcode": "KH06"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[104.3, 12.2], [105.6, 12.2], [105.6, 13.3], [104.7, 13.3], [104.3, 12.9], [104.3, 12.2]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Kampong Chhnang",
+        "name_km": "កំពង់ឆ្នាំង",
+        "code": "KH-04",
+        "pcode": "KH04"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[104.0, 11.8], [104.9, 11.8], [104.9, 12.5], [104.5, 12.5], [104.0, 12.3], [104.0, 11.8]]]
+      }
+    }
+  ]
+}
