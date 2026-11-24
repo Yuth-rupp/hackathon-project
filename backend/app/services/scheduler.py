@@ -13,6 +13,10 @@ Design rules for a trustworthy "real-time" system:
     the periodic jobs are only a safety net.
   * River discharge is compared against a real historical (1991-2020)
     same-season climatology, never against the forecast's own statistics.
+
+NOTE: main.py owns the running APScheduler instance and imports the job
+functions from this module. The event-driven follow-up sweep therefore does
+not depend on this module's own scheduler; it uses a debounced asyncio task.
 """
 
 import asyncio
@@ -125,24 +129,33 @@ async def _followup_job() -> None:
     await check_alerts_job()
 
 
+_followup_task: Optional["asyncio.Task"] = None
+
+
+async def _delayed_followup(delay: float = 5.0) -> None:
+    await asyncio.sleep(delay)
+    try:
+        await _followup_job()
+    except Exception:
+        logger.exception("Follow-up risk/alert sweep failed")
+
+
 def _schedule_followups(reason: str) -> None:
     """
-    Queue ONE risk + alert sweep a few seconds from now. Using a fixed job id
-    with replace_existing debounces bursts (e.g. weather + discharge finishing
-    together) into a single sweep.
+    Queue ONE risk + alert sweep a few seconds from now. If a sweep is already
+    queued, the request is merged into it (debounce), so bursts such as
+    weather + discharge finishing together cause a single sweep.
+    Works with any scheduler because it only needs the running event loop.
     """
-    if not scheduler.running:
+    global _followup_task
+
+    if _followup_task is not None and not _followup_task.done():
         return
+
     try:
-        scheduler.add_job(
-            _followup_job,
-            trigger="date",
-            run_date=_utc_now() + timedelta(seconds=5),
-            id="followup_risk_alerts",
-            name=f"Follow-up risk & alert sweep ({reason})",
-            replace_existing=True,
-        )
-    except Exception as exc:
+        _followup_task = asyncio.get_running_loop().create_task(_delayed_followup())
+        logger.info("Follow-up risk & alert sweep queued (%s).", reason)
+    except RuntimeError as exc:
         logger.warning("Could not schedule follow-up sweep: %s", exc)
 
 
@@ -716,6 +729,9 @@ async def fetch_gauge_job() -> Dict[str, Any]:
     values) and the source is marked 'not_configured' so the dashboard can say
     plainly that no observed gauge data is being ingested. Gauges can still be
     fed through POST /hydrology/telemetry.
+
+    A station only counts as OK when the connector reports status 'active';
+    connector errors are returned (not raised), so they are checked explicitly.
     """
     from app.connectors.mrc import MRCConnector
 
@@ -740,9 +756,13 @@ async def fetch_gauge_job() -> Dict[str, Any]:
             # The connector validates, de-duplicates, stores and broadcasts
             # ("station_reading" SSE events) the readings itself.
             result = await connector.fetch_station_readings(code)
-            stations_ok += 1
-            stored = int(result.get("stored") or 0)
 
+            if result.get("status") == "active":
+                stations_ok += 1
+            else:
+                failures.append(f"{code}: {result.get('error') or result.get('status')}")
+
+            stored = int(result.get("stored") or 0)
             if stored:
                 stations_updated += 1
                 new_readings += stored
@@ -916,7 +936,9 @@ def _startup(offset_seconds: int) -> Dict[str, Any]:
 
 def setup_scheduler(app=None) -> AsyncIOScheduler:
     """
-    Configure and register all periodic background jobs.
+    Configure and register all periodic background jobs on THIS module's
+    scheduler. (main.py currently runs its own scheduler instead; use either
+    this function or main.py's job list, not both.)
     """
     if not settings.SCHEDULER_ENABLED:
         logger.info("Scheduler is disabled via configuration.")
