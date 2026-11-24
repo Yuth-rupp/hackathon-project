@@ -78,6 +78,7 @@ class CurrentWeatherResponse(BaseModel):
     soil_moisture: Optional[float] = None
 
     data_source: str = "Open-Meteo"
+    fallback_reason: Optional[str] = None
     timezone: str = TIMEZONE
 
 
@@ -273,34 +274,6 @@ def _wmo_code_from_met_symbol(symbol: Optional[str]) -> Optional[int]:
     return 2
 
 
-def _estimate_precip_probability(
-    precip_mm: Optional[float],
-    symbol: Optional[str],
-    cloud_cover: Optional[float],
-    humidity: Optional[float],
-) -> float:
-    """Estimate precipitation probability (%) when a provider omits it."""
-    s = (symbol or "").lower()
-    p = float(precip_mm or 0.0)
-    cloud = float(cloud_cover) if cloud_cover is not None else 30.0
-    hum = float(humidity) if humidity is not None else 60.0
-
-    if p >= 4.0 or "heavyrain" in s or "thunder" in s:
-        return 90.0
-    if p >= 1.5:
-        return 80.0
-    if p >= 0.4:
-        return 65.0
-    if p > 0.0:
-        return 45.0
-    if "rain" in s or "shower" in s:
-        return 50.0
-
-    # Dry hour: low probability proportional to cloud cover and humidity
-    dry_prob = (cloud * 0.15) + max(0.0, (hum - 60.0) * 0.25)
-    return round(max(0.0, min(25.0, dry_prob)), 0)
-
-
 def _soil_risk_level(saturation_pct: Optional[float]) -> str:
     if saturation_pct is None:
         return "Unavailable"
@@ -494,18 +467,15 @@ async def _fetch_met_norway_as_open_meteo(loc: Dict[str, Any]) -> Dict[str, Any]
             if details_1h.get("probability_of_precipitation") is not None
             else details_6h.get("probability_of_precipitation")
         )
-        step_prob = (
-            float(raw_prob)
-            if raw_prob is not None
-            else _estimate_precip_probability(step_precip, symbol, cloud, humid)
-        )
+        # Never invent a probability: if the provider omits it, leave it empty.
+        step_prob = float(raw_prob) if raw_prob is not None else None
 
         if idx == 0:
             current_payload = {
                 "time": local_hour_str,
                 "temperature_2m": temp,
                 "relative_humidity_2m": humid,
-                "precipitation": step_precip if step_precip is not None else 0.0,
+                "precipitation": step_precip,
                 "precipitation_probability": step_prob,
                 "weather_code": wmo_code,
                 "wind_speed_10m": wind_kmh,
@@ -633,6 +603,8 @@ async def get_unified_forecast(loc: Dict[str, Any]) -> Dict[str, Any]:
         if cached and (now - cached[0]) < FORECAST_CACHE_TTL_SECONDS:
             return cached[1]
 
+        fallback_reason: Optional[str] = None
+
         if now >= _OPEN_METEO_COOLDOWN_UNTIL:
             params = {
                 "latitude": loc["lat"],
@@ -679,14 +651,21 @@ async def get_unified_forecast(loc: Dict[str, Any]) -> Dict[str, Any]:
             except httpx.HTTPStatusError as exc:
                 if exc.response.status_code == 429:
                     _OPEN_METEO_COOLDOWN_UNTIL = time.time() + RATE_LIMIT_COOLDOWN_SECONDS
+                    fallback_reason = "Open-Meteo rate-limited (HTTP 429)"
                     logger.warning("Open-Meteo 429 rate-limited; switching to MET Norway + NASA POWER.")
                 else:
+                    fallback_reason = f"Open-Meteo HTTP error {exc.response.status_code}"
                     logger.warning("Open-Meteo HTTP error %s; switching to fallback.", exc.response.status_code)
             except (httpx.HTTPError, ValueError) as exc:
+                fallback_reason = f"Open-Meteo request failed: {type(exc).__name__}"
                 logger.warning("Open-Meteo request error (%s); switching to fallback.", exc)
+
+        if fallback_reason is None:
+            fallback_reason = "Open-Meteo paused after a recent rate limit (cooldown)"
 
         try:
             fallback_data = await _fetch_met_norway_as_open_meteo(loc)
+            fallback_data["_fallback_reason"] = fallback_reason
             _FORECAST_CACHE[cache_key] = (time.time(), fallback_data)
             return fallback_data
         except Exception as exc:
@@ -862,6 +841,7 @@ async def get_current_weather(
         soil_moisture=soil_meta.get("topsoil_moisture_0_7cm"),
 
         data_source=data.get("_data_source", "Open-Meteo"),
+        fallback_reason=data.get("_fallback_reason"),
         timezone=data.get("timezone", TIMEZONE),
     )
 

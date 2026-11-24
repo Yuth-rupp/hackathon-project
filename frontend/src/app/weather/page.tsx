@@ -359,11 +359,17 @@ export default function WeatherPage() {
             </div>
 
             <div className="font-mono text-2xl font-bold text-cyan-300">
-              {formatNumber(currentWeather?.precipitation_mm)} mm
+              {currentWeather?.precipitation_mm == null
+                ? "—"
+                : `${formatNumber(currentWeather.precipitation_mm)} mm`}
             </div>
 
             <span className="mt-1 block text-[10px] text-slate-400">
-              Provider observation
+              {currentWeather?.precipitation_mm == null
+                ? "Not provided by source"
+                : currentWeather?.data_source?.includes("MET Norway")
+                  ? "Forecast for the next hour"
+                  : "Provider observation"}
             </span>
           </div>
 
@@ -375,11 +381,15 @@ export default function WeatherPage() {
             </div>
 
             <div className="font-mono text-2xl font-bold text-amber-300">
-              {formatNumber(currentPrecipitationProbability, 0)}%
+              {currentPrecipitationProbability === null
+                ? "—"
+                : `${formatNumber(currentPrecipitationProbability, 0)}%`}
             </div>
 
             <span className="mt-1 block text-[10px] text-slate-400">
-              Precipitation probability
+              {currentPrecipitationProbability === null
+                ? "Not provided by source"
+                : "Precipitation probability"}
             </span>
           </div>
 
@@ -679,7 +689,10 @@ export default function WeatherPage() {
                               : "bg-navy-800 text-slate-400"
                       }`}
                     >
-                      {formatNumber(day.precipitation_probability_max, 0)}%
+                      {day.precipitation_probability_max === null ||
+                      day.precipitation_probability_max === undefined
+                        ? "—"
+                        : `${formatNumber(day.precipitation_probability_max, 0)}%`}
                     </span>
                   </td>
 
