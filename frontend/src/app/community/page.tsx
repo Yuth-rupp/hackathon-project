@@ -37,6 +37,7 @@ const LIVE_EVENTS = [
   "alert_changed",
   "station_reading",
   "discharge_updated",
+  "alerts_updated",
 ];
 
 // A preparedness card turns into "Do now" once the community action level

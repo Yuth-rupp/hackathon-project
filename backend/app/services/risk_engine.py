@@ -806,6 +806,11 @@ class RiskEngine:
             WHERE s.province LIKE ?
               AND s.is_active = 1
               AND wl.value IS NOT NULL
+              AND UPPER(COALESCE(wl.data_source, '')) NOT LIKE '%BASELINE%'
+              AND UPPER(COALESCE(wl.data_source, '')) NOT LIKE '%CALIBRATED%'
+              AND UPPER(COALESCE(wl.data_source, '')) NOT LIKE '%SIMULATED%'
+              AND UPPER(COALESCE(wl.data_source, '')) NOT LIKE '%SEED%'
+              AND UPPER(COALESCE(wl.data_source, '')) NOT LIKE '%DEMO%'
             ORDER BY wl.timestamp DESC
             LIMIT 1
             """,

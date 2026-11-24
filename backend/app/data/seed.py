@@ -491,7 +491,7 @@ async def seed_all() -> None:
                     await db.execute(
                         """
                         INSERT INTO water_levels (station_id, timestamp, value, unit, data_source, retrieval_timestamp, quality_flag)
-                        VALUES (?, ?, ?, 'm', 'MRC_TELEMETRY', ?, 'validated')
+                        VALUES (?, ?, ?, 'm', 'SEED_DEMO', ?, 'demo')
                         """,
                         (st["id"], dt_str, round(base_wl + (14 - d) * 0.05, 2), now_iso)
                     )

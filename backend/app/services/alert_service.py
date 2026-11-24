@@ -223,6 +223,13 @@ class AlertService:
                     new_alerts.append(alert)
 
         # 2. Check hydrological station gauge alarms directly
+        # Only REAL, RECENT readings may raise an alarm: placeholder rows
+        # (baseline / seed / demo ...) and readings older than
+        # GAUGE_STALE_AFTER_HOURS are ignored.
+        cutoff = (
+            now - timedelta(hours=float(getattr(settings, "GAUGE_STALE_AFTER_HOURS", 24)))
+        ).strftime("%Y-%m-%dT%H:%M:%S")
+
         st_cursor = await db.execute(
             """
             SELECT s.id, s.name, s.name_km, s.province, s.alarm_level, s.flood_level, wl.value as water_level
@@ -230,11 +237,18 @@ class AlertService:
             JOIN water_levels wl ON s.id = wl.station_id
             WHERE s.is_active = 1
             AND wl.id = (
-                SELECT id FROM water_levels 
-                WHERE station_id = s.id 
-                ORDER BY timestamp DESC LIMIT 1
+                SELECT w.id FROM water_levels w
+                WHERE w.station_id = s.id
+                AND UPPER(COALESCE(w.data_source, '')) NOT LIKE '%BASELINE%'
+                AND UPPER(COALESCE(w.data_source, '')) NOT LIKE '%CALIBRATED%'
+                AND UPPER(COALESCE(w.data_source, '')) NOT LIKE '%SIMULATED%'
+                AND UPPER(COALESCE(w.data_source, '')) NOT LIKE '%SEED%'
+                AND UPPER(COALESCE(w.data_source, '')) NOT LIKE '%DEMO%'
+                AND substr(w.timestamp, 1, 19) >= ?
+                ORDER BY w.timestamp DESC LIMIT 1
             )
-            """
+            """,
+            (cutoff,),
         )
         stations = await st_cursor.fetchall()
 

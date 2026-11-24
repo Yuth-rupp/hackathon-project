@@ -30,12 +30,24 @@ import {
   RiskSummaryStrip,
 } from "@/components/risk/RiskPanels";
 
+import { LiveIndicator } from "@/components/community/LiveCommunityRisk";
+import { useLiveStream } from "@/hooks/useLiveStream";
 import { fetchRiskAssessments, triggerRiskAssessment } from "@/lib/api";
 import { LEVEL_COLORS, fill, formatAge, getRiskText } from "@/lib/riskText";
 import { useLanguage } from "@/context/LanguageContext";
 import type { RiskAssessment } from "@/types";
 
 const AUTO_REFRESH_MS = 5 * 60 * 1000;
+
+// Events pushed by the server that change what this page shows.
+const LIVE_EVENTS = [
+  "risk_updated",
+  "station_reading",
+  "discharge_updated",
+  "alert_created",
+  "alert_changed",
+  "alerts_updated",
+];
 const STALE_AFTER_MINUTES = 6 * 60;
 
 const TonleSapMap = dynamic(() => import("@/components/maps/TonleSapMap"), {
@@ -122,6 +134,40 @@ export default function RiskPage() {
     };
   }, [load]);
 
+  // -------------------------------------------------------
+  // Real-time: refresh the moment the server announces new data
+  // -------------------------------------------------------
+
+  const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // One assessment per province arrives together, so wait a moment and
+  // fetch once.
+  const scheduleRefresh = useCallback(() => {
+    if (refreshTimer.current) return;
+
+    refreshTimer.current = setTimeout(() => {
+      refreshTimer.current = null;
+      load("silent");
+    }, 800);
+  }, [load]);
+
+  const { connection, lastEventAt } = useLiveStream({
+    path: "/community/stream",
+    events: LIVE_EVENTS,
+    onEvent: scheduleRefresh,
+    onPoll: () => load("silent"),
+  });
+
+  // Keep "x min ago" labels current between refreshes.
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 30_000);
+
+    return () => {
+      window.clearInterval(timer);
+      if (refreshTimer.current) clearTimeout(refreshTimer.current);
+    };
+  }, []);
+
   async function handleRecalculate() {
     try {
       setRecalculating(true);
@@ -181,6 +227,12 @@ export default function RiskPage() {
       }
       actions={
         <div className="flex items-center gap-2">
+          <LiveIndicator
+            connection={connection}
+            lastEventAt={lastEventAt}
+            now={now}
+          />
+
           <button
             type="button"
             onClick={() => load("manual")}

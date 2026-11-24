@@ -3,9 +3,10 @@ FloodPulse AI - Executive Dashboard & Disaster Catalog Router
 High-level KPIs, historical flood impacts, and NASA FIRMS environmental monitoring.
 """
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 from fastapi import APIRouter, Query
+from app.config import settings
 from app.database import fetch_all, fetch_one
 from app.models import DashboardKPIResponse, FloodEventResponse
 from app.connectors.firms import FIRMSConnector
@@ -29,12 +30,29 @@ async def get_dashboard_kpis():
     alert_count = active_alerts["count"] if active_alerts else 0
 
     # 2. Stations & Water Level status
+    # Only REAL, RECENT readings count: placeholder rows (baseline / seed /
+    # demo ...) and readings older than GAUGE_STALE_AFTER_HOURS are ignored,
+    # so an old or invented value can never show a station "in alarm".
+    gauge_cutoff = (
+        datetime.now(timezone.utc)
+        - timedelta(hours=float(getattr(settings, "GAUGE_STALE_AFTER_HOURS", 24)))
+    ).strftime("%Y-%m-%dT%H:%M:%S")
+
     stations = await fetch_all(
         """
         SELECT s.id, s.alarm_level, s.flood_level,
-               (SELECT wl.value FROM water_levels wl WHERE wl.station_id = s.id ORDER BY wl.timestamp DESC LIMIT 1) as latest_level
+               (SELECT wl.value FROM water_levels wl
+                 WHERE wl.station_id = s.id
+                   AND UPPER(COALESCE(wl.data_source, '')) NOT LIKE '%BASELINE%'
+                   AND UPPER(COALESCE(wl.data_source, '')) NOT LIKE '%CALIBRATED%'
+                   AND UPPER(COALESCE(wl.data_source, '')) NOT LIKE '%SIMULATED%'
+                   AND UPPER(COALESCE(wl.data_source, '')) NOT LIKE '%SEED%'
+                   AND UPPER(COALESCE(wl.data_source, '')) NOT LIKE '%DEMO%'
+                   AND substr(wl.timestamp, 1, 19) >= ?
+                 ORDER BY wl.timestamp DESC LIMIT 1) as latest_level
         FROM stations s WHERE s.is_active = 1
-        """
+        """,
+        (gauge_cutoff,),
     )
     total_stations = len(stations)
     in_alarm = 0

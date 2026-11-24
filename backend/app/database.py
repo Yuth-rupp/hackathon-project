@@ -406,23 +406,10 @@ async def seed_default_data(db: aiosqlite.Connection) -> None:
             (*src, now_iso)
         )
 
-    # 4. Seed Baseline Water Levels if table is empty
-    cursor = await db.execute("SELECT COUNT(*) as count FROM water_levels")
-    row = await cursor.fetchone()
-    if row and row["count"] == 0:
-        logger.info("Seeding baseline hydrological water levels for Tonle Sap stations...")
-        station_cursor = await db.execute("SELECT id, code, alarm_level, flood_level FROM stations")
-        stations_rows = await station_cursor.fetchall()
-        for s in stations_rows:
-            # Baseline realistic water levels
-            base_val = 6.8 if s["code"] == "020102" else (5.4 if s["code"] == "020106" else 9.2)
-            await db.execute(
-                """
-                INSERT INTO water_levels (station_id, timestamp, value, unit, data_source, retrieval_timestamp, quality_flag)
-                VALUES (?, ?, ?, 'm', 'MRC_BASELINE', ?, 'validated')
-                """,
-                (s["id"], now_iso, base_val, now_iso)
-            )
+    # 4. Water levels are NOT seeded.
+    # Gauges show "NO DATA" until a real source supplies readings
+    # (MRC_API_TOKEN, or POST /hydrology/telemetry). Seeding invented values
+    # here made the dashboards look live and fed made-up numbers to the risk model.
 
     # 5. Seed Historical Flood Event benchmark (2020 Cambodia Floods)
     event_cursor = await db.execute("SELECT COUNT(*) as count FROM flood_events")

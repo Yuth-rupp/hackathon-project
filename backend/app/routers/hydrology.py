@@ -1200,6 +1200,16 @@ async def ingest_telemetry(
     for event in events:
         broker.publish("station_reading", event)
 
+    # New real gauge reading: queue ONE debounced risk + alert sweep, so the
+    # Risk page, Community page and alerts follow the new water level.
+    if events:
+        try:
+            from app.services.scheduler import _schedule_followups
+
+            _schedule_followups("telemetry")
+        except Exception:
+            logger.exception("Could not queue follow-up risk/alert sweep.")
+
     return {
         "stored": stored,
         "duplicates_skipped": duplicates,
