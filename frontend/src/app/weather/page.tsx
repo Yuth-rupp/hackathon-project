@@ -71,6 +71,61 @@ function getCompleteRainfallTotal(
   );
 }
 
+/**
+ * Rain probability straight from Open-Meteo, requested by the visitor's own
+ * browser. The backend sometimes has to fall back to MET Norway (when Open-Meteo
+ * rate-limits the server), and MET Norway does not publish rain probability for
+ * Cambodia. Real values only: if this request fails, nothing is filled in.
+ */
+async function fetchBrowserRainProbability(
+  lat: number,
+  lon: number,
+): Promise<{
+  hourly: Record<string, number>;
+  daily: Record<string, number>;
+} | null> {
+  try {
+    const url =
+      "https://api.open-meteo.com/v1/forecast" +
+      `?latitude=${lat}&longitude=${lon}` +
+      "&hourly=precipitation_probability" +
+      "&daily=precipitation_probability_max" +
+      "&forecast_days=7&timezone=Asia%2FPhnom_Penh";
+
+    const response = await fetch(url, { cache: "no-store" });
+    if (!response.ok) return null;
+
+    const data = await response.json();
+    const hourly: Record<string, number> = {};
+    const daily: Record<string, number> = {};
+
+    const hourTimes: string[] = data?.hourly?.time ?? [];
+    const hourValues: Array<number | null> =
+      data?.hourly?.precipitation_probability ?? [];
+    hourTimes.forEach((time, index) => {
+      const value = hourValues[index];
+      if (value !== null && value !== undefined) {
+        hourly[time.slice(0, 13)] = value;
+      }
+    });
+
+    const dayTimes: string[] = data?.daily?.time ?? [];
+    const dayValues: Array<number | null> =
+      data?.daily?.precipitation_probability_max ?? [];
+    dayTimes.forEach((day, index) => {
+      const value = dayValues[index];
+      if (value !== null && value !== undefined) {
+        daily[day] = value;
+      }
+    });
+
+    return { hourly, daily };
+  } catch (error) {
+    console.warn("Browser rain-probability lookup failed:", error);
+    return null;
+  }
+}
+
 export default function WeatherPage() {
   const [selectedLocationId, setSelectedLocationId] =
     useState<string>("pursat");
@@ -114,8 +169,61 @@ export default function WeatherPage() {
 
         if (requestId !== requestIdRef.current) return;
 
-        setCurrentWeather(current);
-        setForecast(forecastData);
+        let mergedCurrent = current;
+        let mergedForecast = forecastData;
+
+        // The backend may have used a provider without rain probability.
+        // Ask Open-Meteo directly from the browser and fill only what is empty.
+        const needsProbability =
+          current.precipitation_probability_pct == null ||
+          forecastData.hourly.every(
+            (hour) => hour.precipitation_probability_pct == null,
+          ) ||
+          forecastData.daily.every(
+            (day) => day.precipitation_probability_max == null,
+          );
+
+        if (needsProbability) {
+          const place = MONITORING_LOCATIONS.find(
+            (location) => location.id === locationId,
+          );
+          const extra = place
+            ? await fetchBrowserRainProbability(place.lat, place.lon)
+            : null;
+
+          if (requestId !== requestIdRef.current) return;
+
+          if (extra) {
+            const hourKey = (current.timestamp ?? "").slice(0, 13);
+            mergedCurrent = {
+              ...current,
+              precipitation_probability_pct:
+                current.precipitation_probability_pct ??
+                extra.hourly[hourKey] ??
+                null,
+            };
+            mergedForecast = {
+              ...forecastData,
+              hourly: forecastData.hourly.map((hour) => ({
+                ...hour,
+                precipitation_probability_pct:
+                  hour.precipitation_probability_pct ??
+                  extra.hourly[hour.time.slice(0, 13)] ??
+                  null,
+              })),
+              daily: forecastData.daily.map((day) => ({
+                ...day,
+                precipitation_probability_max:
+                  day.precipitation_probability_max ??
+                  extra.daily[day.date] ??
+                  null,
+              })),
+            };
+          }
+        }
+
+        setCurrentWeather(mergedCurrent);
+        setForecast(mergedForecast);
         setError(null);
         setLastChecked(new Date());
 
