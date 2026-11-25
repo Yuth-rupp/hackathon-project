@@ -1,11 +1,11 @@
-'use client';
+"use client";
 
-import React from 'react';
-import { Navbar } from './Navbar';
-import { Sidebar } from './Sidebar';
-import { Footer } from './Footer';
-import { DataFreshness } from '@/components/common/DataFreshness';
-import { Radio } from 'lucide-react';
+import React from "react";
+import { Navbar } from "./Navbar";
+import { Sidebar } from "./Sidebar";
+import { Footer } from "./Footer";
+import { DataFreshness } from "@/components/common/DataFreshness";
+import { Radio } from "lucide-react";
 
 interface DashboardLayoutProps {
   children: React.ReactNode;
@@ -28,12 +28,12 @@ export function DashboardLayout({
       <Navbar />
 
       {/* Main Workspace Frame */}
-      <div className="flex flex-1 overflow-hidden">
-        {/* Collapsible Left Sidebar */}
+      <div className="flex flex-1">
+        {/* Collapsible Left Sidebar (sticky) */}
         <Sidebar />
 
         {/* Content Area */}
-        <main className="flex-1 overflow-y-auto px-4 py-6 sm:px-6 lg:px-8">
+        <main className="min-w-0 flex-1 px-4 py-6 sm:px-6 lg:px-8">
           {/* Header section if provided */}
           {(title || actions) && (
             <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-navy-800/80 pb-5">
@@ -44,9 +44,7 @@ export function DashboardLayout({
                   </h1>
                 )}
                 {subtitle && (
-                  <p className="mt-1 text-sm text-slate-400">
-                    {subtitle}
-                  </p>
+                  <p className="mt-1 text-sm text-slate-400">{subtitle}</p>
                 )}
               </div>
 
@@ -58,9 +56,7 @@ export function DashboardLayout({
           )}
 
           {/* Child Page Content */}
-          <div className="space-y-6">
-            {children}
-          </div>
+          <div className="space-y-6">{children}</div>
         </main>
       </div>
 
