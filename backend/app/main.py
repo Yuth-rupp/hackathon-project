@@ -37,6 +37,7 @@ from app.services.scheduler import (
     fetch_discharge_job,
     fetch_gauge_job,
     check_alerts_job,
+    refresh_discharge_climatology_job,
 )
 
 from app.services.risk_engine import risk_engine
@@ -280,6 +281,21 @@ async def lifespan(app: FastAPI):
                 max_instances=1,
                 coalesce=True,
                 next_run_time=datetime.now(timezone.utc),
+            )
+
+            # HISTORICAL DISCHARGE CLIMATOLOGY (1991-2020 baseline)
+            # Without this the Hydrology page cannot compare the forecast
+            # with a normal range and shows UNKNOWN / Unavailable.
+            scheduler.add_job(
+                refresh_discharge_climatology_job,
+                trigger="interval",
+                days=7,
+                id="job_discharge_climatology",
+                name="GloFAS Historical Discharge Climatology (1991-2020)",
+                replace_existing=True,
+                max_instances=1,
+                coalesce=True,
+                next_run_time=datetime.now(timezone.utc) + timedelta(seconds=30),
             )
 
             # MRC GAUGE WATER LEVEL POLLING

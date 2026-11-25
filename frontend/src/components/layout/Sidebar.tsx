@@ -102,7 +102,7 @@ export function Sidebar() {
   return (
     <aside
       className={clsx(
-        "relative hidden md:flex flex-col border-r border-navy-800 bg-navy-950/80 backdrop-blur-md transition-all duration-300 ease-in-out",
+        "sticky top-16 h-[calc(100dvh-4rem)] self-start shrink-0 hidden md:flex flex-col border-r border-navy-800 bg-navy-950/80 backdrop-blur-md transition-all duration-300 ease-in-out",
         collapsed ? "w-20" : "w-64",
       )}
     >

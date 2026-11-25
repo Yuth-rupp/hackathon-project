@@ -49,6 +49,7 @@ from app.services.glofas import (
     DISCHARGE_SOURCE_LABEL,
     classify_discharge,
     get_climatology,
+    refresh_location_climatology,
     store_glofas_forecast,
 )
 
@@ -592,6 +593,21 @@ async def get_discharge_forecast(
         if current
         else None
     )
+
+    # No stored baseline yet (first deploy, new location, or the scheduler job
+    # has not run): build it once now so the page does not stay UNKNOWN.
+    if current and clim is None and lat is not None and lon is not None:
+        try:
+            await refresh_location_climatology(
+                db, location_id, float(lat), float(lon)
+            )
+            clim = await get_climatology(db, location_id, current["date"])
+        except Exception as exc:
+            logger.warning(
+                "On-demand climatology failed for location %s: %s",
+                location_id,
+                exc,
+            )
     verdict = classify_discharge(current_value, clim)
 
     if current is None:
