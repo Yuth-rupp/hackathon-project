@@ -460,3 +460,151 @@ export interface CommunityProfile {
 
   contact_hotline: string;
 }
+
+// ============================================================
+// LIVE COMMUNITY RISK (GET /community/risk-live)
+// ============================================================
+
+export interface CommunityRiskFactor {
+  name: string;
+  label: string;
+  score: number | null;
+  weight: number | null;
+  contribution: number | null;
+}
+
+export interface CommunityRiskModel {
+  available: boolean;
+  category: string | null;
+  level: RiskLevel | null;
+  score: number | null;
+  primary_driver?: string | null;
+  assessment_date?: string | null;
+  age_minutes?: number | null;
+  freshness: string;
+  data_status?: string | null;
+  data_coverage_percent?: number | null;
+  explanation_en?: string;
+  explanation_km?: string;
+  model_version?: string;
+  factors: CommunityRiskFactor[];
+}
+
+export interface CommunityRiskTrend {
+  direction: "rising" | "falling" | "steady" | "unknown";
+  delta: number | null;
+  window_hours: number;
+  points: { t: string; score: number }[];
+}
+
+export interface CommunityGauge {
+  code: string;
+  name: string;
+  name_km: string | null;
+  water_level_m: number | null;
+  alarm_level_m: number | null;
+  flood_level_m: number | null;
+  status: string;
+  freshness: string;
+  age_seconds: number | null;
+  timestamp: string | null;
+  counts_for_risk: boolean;
+}
+
+export interface CommunityAlert {
+  id: number;
+  severity: string;
+  title: string;
+  title_km: string | null;
+  message: string;
+  message_km: string | null;
+  status: string;
+  trigger_source: string | null;
+  created_at: string;
+}
+
+export interface CommunityAction {
+  index: number;
+  level: RiskLevel;
+  category: string;
+  code: string;
+  label_en: string;
+  label_km: string;
+  guidance_en: string;
+  driven_by: { source: string; level: string }[];
+  escalated: boolean;
+}
+
+export interface CommunitySafeSite {
+  name: string;
+  name_km: string;
+  type: string;
+  group: "shelter" | "health" | "structure";
+  capacity_people: number | null;
+  elevation_m: number;
+  lat: number;
+  lon: number;
+  posture: { code: string; label_en: string; label_km: string };
+}
+
+export interface CommunityDischarge {
+  current_m3s: number | null;
+  current_date: string | null;
+  current_status: string;
+  forecast_peak_m3s: number | null;
+  forecast_peak_date: string | null;
+  forecast_peak_status: string;
+  source: string | null;
+  retrieved_at: string | null;
+  warning_m3s: number;
+  alarm_m3s: number;
+}
+
+export interface CommunityFloodHistory {
+  recorded_events: number;
+  last_event_date: string | null;
+  last_event_affected_people: number | null;
+}
+
+export interface CommunityProvinceRisk {
+  location_id: number;
+  key: string;
+  name: string;
+  name_km: string;
+  province: string;
+  province_code?: string | null;
+  population?: number | null;
+  vulnerable_communes?: number | null;
+  elevation_m: number | null;
+  risk: CommunityRiskModel;
+  trend: CommunityRiskTrend;
+  action: CommunityAction;
+  gauges: CommunityGauge[];
+  alerts: CommunityAlert[];
+  discharge: CommunityDischarge;
+  safe_sites: CommunitySafeSite[];
+  shelter_capacity_people: number;
+  flood_history: CommunityFloodHistory;
+}
+
+export interface CommunityBasinSummary {
+  live_gauges: number;
+  gauges_in_alarm: number;
+  gauges_in_flood: number;
+  newest_gauge_reading: string | null;
+  open_alerts: number;
+  provinces_total: number;
+  provinces_at_alert_or_above: number;
+  satellite: {
+    last_pass: string | null;
+    last_processed_pass: string | null;
+    last_water_extent_km2: number | null;
+  };
+}
+
+export interface CommunityRiskLive {
+  generated_at: string;
+  model_version: string;
+  basin: CommunityBasinSummary;
+  provinces: CommunityProvinceRisk[];
+}

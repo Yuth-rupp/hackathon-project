@@ -8,6 +8,7 @@ import {
 import {
   Alert,
   CommunityProfile,
+  CommunityRiskLive,
   DashboardKPIs,
   DataSource,
   FloodEvent,
@@ -1099,6 +1100,18 @@ export async function fetchFloodHistory(
 // ============================================================
 // COMMUNITY PROFILE
 // ============================================================
+
+export async function fetchCommunityRiskLive(): Promise<CommunityRiskLive> {
+  const response = await fetch(`${API_BASE_URL}/community/risk-live`, {
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    throw new Error(`Community risk API returned ${response.status}`);
+  }
+
+  return (await response.json()) as CommunityRiskLive;
+}
 
 export async function fetchCommunityProfile(
   provinceName: string,
