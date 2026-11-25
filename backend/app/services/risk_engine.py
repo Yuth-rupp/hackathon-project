@@ -12,11 +12,9 @@ This is a weighted rule-based model.
 It does not produce calibrated flood probabilities.
 """
 
-import asyncio
 import json
 import logging
 import math
-import time
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -24,7 +22,6 @@ import aiosqlite
 import httpx
 
 from app.config import settings
-from app.services.realtime import broker
 
 logger = logging.getLogger(__name__)
 
@@ -49,10 +46,13 @@ class RiskEngine:
     MODEL_VERSION = "v2.1-rule-based"
     MODEL_TYPE = "MultiFactorRuleEngine"
 
+    # Fixed discharge thresholds. These must match the units
+    # stored in river_discharge.discharge_m3s.
     DISCHARGE_BASELINE_M3S = 800.0
     DISCHARGE_WARNING_M3S = 2500.0
     DISCHARGE_ALARM_M3S = 4000.0
 
+    # Open-Meteo returns weather times in Asia/Bangkok (UTC+7) without an offset.
     LOCAL_UTC_OFFSET_HOURS = 7
     WEATHER_HISTORY_DAYS = 30
     WEATHER_HISTORY_REFRESH_MINUTES = 90
@@ -65,9 +65,6 @@ class RiskEngine:
         "High": (50.0, 75.0),
         "Very High": (75.0, 100.0),
     }
-
-    def __init__(self) -> None:
-        self._rate_limited_until: float = 0.0
 
     # ---------------------------------------------------------
     # Utility functions
@@ -158,10 +155,15 @@ class RiskEngine:
         lon: Optional[float],
         now: datetime,
     ) -> None:
-        if lat is None or lon is None:
-            return
+        """
+        Make sure the last 30 days of hourly rainfall and soil moisture are
+        stored for this location. Fetches from Open-Meteo when the stored
+        history is missing or older than WEATHER_HISTORY_REFRESH_MINUTES.
 
-        if time.time() < self._rate_limited_until:
+        This keeps the rainfall and soil factors available even if the
+        scheduled weather sync has not run yet.
+        """
+        if lat is None or lon is None:
             return
 
         cursor = await db.execute(
@@ -206,21 +208,6 @@ class RiskEngine:
                 )
                 response.raise_for_status()
                 payload = response.json()
-
-        except httpx.HTTPStatusError as exc:
-            if exc.response.status_code == 429:
-                self._rate_limited_until = time.time() + 900
-                logger.warning(
-                    "Open-Meteo rate-limited (429); pausing history sync for 15 minutes."
-                )
-            else:
-                logger.warning(
-                    "Could not fetch weather history for location %s: %s: %s",
-                    location_id,
-                    type(exc).__name__,
-                    exc,
-                )
-            return
 
         except Exception as exc:
             logger.warning(
@@ -306,6 +293,8 @@ class RiskEngine:
         rain_7d: float,
         rain_30d: float,
     ) -> float:
+        """Calculate rainfall risk from accumulated rainfall in mm."""
+
         score_3d = min(max(rain_3d, 0.0) / 150.0, 1.0) * 100
         score_7d = min(max(rain_7d, 0.0) / 250.0, 1.0) * 100
         score_30d = min(max(rain_30d, 0.0) / 500.0, 1.0) * 100
@@ -325,6 +314,15 @@ class RiskEngine:
         warning_m3s: float = DISCHARGE_WARNING_M3S,
         alarm_m3s: float = DISCHARGE_ALARM_M3S,
     ) -> float:
+        """
+        Convert discharge in m3/s into a 0-100 score.
+
+        Important:
+        A small discharge value produces a small score.
+        Do not use this function if the stored value is in a
+        different unit, such as litres/second or a normalized index.
+        """
+
         discharge = max(0.0, discharge_m3s)
 
         if not (
@@ -362,6 +360,8 @@ class RiskEngine:
         water_level_m: float,
         alarm_level_m: float,
     ) -> float:
+        """Calculate water-level risk relative to a station alarm level."""
+
         if alarm_level_m <= 0:
             raise ValueError("Alarm level must be greater than zero.")
 
@@ -384,6 +384,8 @@ class RiskEngine:
         water_level_m: Optional[float] = None,
         alarm_level_m: Optional[float] = None,
     ) -> Optional[float]:
+        """Average the available discharge and water-level scores."""
+
         scores = []
 
         if discharge_m3s is not None:
@@ -412,6 +414,8 @@ class RiskEngine:
         self,
         soil_moisture_m3m3: float,
     ) -> float:
+        """Convert volumetric soil moisture into a 0-100 score."""
+
         moisture = self._clamp(soil_moisture_m3m3, 0.0, 1.0)
 
         if moisture <= 0.15:
@@ -431,6 +435,8 @@ class RiskEngine:
         self,
         dt: Optional[datetime] = None,
     ) -> float:
+        """Estimate seasonal flood-pulse conditions from day of year."""
+
         if dt is None:
             dt = datetime.now(timezone.utc)
 
@@ -461,6 +467,11 @@ class RiskEngine:
         self,
         historical_value: float,
     ) -> float:
+        """
+        Accept either a normalized 0-1 value or a 0-100 score.
+        Values outside those ranges are clamped.
+        """
+
         value = max(0.0, historical_value)
 
         if value <= 1.0:
@@ -538,6 +549,8 @@ class RiskEngine:
         location_name: str,
         province: str,
     ) -> Tuple[str, str]:
+        """Generate an explanation based on available factor scores."""
+
         reasons = []
 
         rainfall = factors.get("rainfall", {})
@@ -577,6 +590,7 @@ class RiskEngine:
             f"{', '.join(reasons)}."
         )
 
+        # Add a clear warning if the hydrology factor is unavailable.
         if "hydrology" not in factors:
             explanation += (
                 " Current hydrological observations were unavailable "
@@ -604,6 +618,7 @@ class RiskEngine:
         now = datetime.now(timezone.utc)
         now_iso = now.isoformat()
 
+        # 1. Monitoring location
         cursor = await db.execute(
             """
             SELECT
@@ -627,6 +642,7 @@ class RiskEngine:
                 f"Monitoring location {location_id} was not found."
             )
 
+        # 2. Weather, rainfall and soil moisture
         await self._ensure_weather_history(
             db=db,
             location_id=location_id,
@@ -645,6 +661,9 @@ class RiskEngine:
         local_7d_text = local_text(local_now - timedelta(days=7))
         local_30d_text = local_text(local_now - timedelta(days=30))
 
+        # Each hour can be stored several times by repeated syncs, so only
+        # the newest row per timestamp is used. Future forecast hours and
+        # one-off "current" rows are excluded to avoid double counting.
         weather_cursor = await db.execute(
             """
             SELECT
@@ -721,6 +740,7 @@ class RiskEngine:
         factors: Dict[str, Any] = {}
         factor_scores: Dict[str, float] = {}
 
+        # Rainfall factor
         if (
             weather_is_fresh
             and rain_3d is not None
@@ -745,6 +765,7 @@ class RiskEngine:
                 },
             )
 
+        # Soil factor
         if (
             weather_is_fresh
             and soil_moisture is not None
@@ -762,6 +783,7 @@ class RiskEngine:
                 },
             )
 
+        # 3. Latest river discharge
         discharge_cursor = await db.execute(
             """
             SELECT discharge_m3s, date
@@ -793,6 +815,7 @@ class RiskEngine:
             )
             discharge_is_fresh = discharge_age_minutes <= 48 * 60
 
+        # 4. Latest active station water level for the province
         station_cursor = await db.execute(
             """
             SELECT
@@ -806,11 +829,6 @@ class RiskEngine:
             WHERE s.province LIKE ?
               AND s.is_active = 1
               AND wl.value IS NOT NULL
-              AND UPPER(COALESCE(wl.data_source, '')) NOT LIKE '%BASELINE%'
-              AND UPPER(COALESCE(wl.data_source, '')) NOT LIKE '%CALIBRATED%'
-              AND UPPER(COALESCE(wl.data_source, '')) NOT LIKE '%SIMULATED%'
-              AND UPPER(COALESCE(wl.data_source, '')) NOT LIKE '%SEED%'
-              AND UPPER(COALESCE(wl.data_source, '')) NOT LIKE '%DEMO%'
             ORDER BY wl.timestamp DESC
             LIMIT 1
             """,
@@ -894,6 +912,7 @@ class RiskEngine:
                 },
             )
 
+        # 5. Seasonal factor
         seasonal_score = self.compute_seasonal_factor(now)
 
         self._add_factor(
@@ -906,6 +925,7 @@ class RiskEngine:
             },
         )
 
+        # 6. Historical factor
         historical_value = self._to_float(
             self._row_value(location, "flood_frequency_score")
         )
@@ -925,12 +945,14 @@ class RiskEngine:
                 },
             )
 
+        # 7. Weighted risk score using available factors only
         risk_score, coverage_percent = self._calculate_weighted_risk(
             factor_scores
         )
 
         category = self.classify_category(risk_score)
 
+        # Primary driver is the factor with the greatest weighted contribution.
         primary_driver = (
             max(
                 factors.items(),
@@ -940,6 +962,7 @@ class RiskEngine:
             else "Not available"
         )
 
+        # 8. Data freshness information
         data_freshness = {
             "weather_timestamp": weather_timestamp,
             "weather_age_minutes": self._round_or_none(
@@ -965,6 +988,7 @@ class RiskEngine:
         else:
             data_status = "limited"
 
+        # 9. Explanations
         explanation_en, explanation_km = self.generate_explanations(
             category=category,
             risk_score=risk_score,
@@ -973,6 +997,7 @@ class RiskEngine:
             province=location["province"],
         )
 
+        # 10. Assessment record
         assessment_record = {
             "location_id": location_id,
             "location_name": location["name"],
@@ -1003,6 +1028,7 @@ class RiskEngine:
             "primary_driver": primary_driver,
         }
 
+        # 11. Save assessment without deleting existing records.
         await db.execute(
             """
             INSERT INTO risk_assessments (
@@ -1035,21 +1061,6 @@ class RiskEngine:
 
         await db.commit()
 
-        try:
-            broker.publish(
-                "risk_updated",
-                {
-                    "location_id": location_id,
-                    "location_name": location["name"],
-                    "province": location["province"],
-                    "risk_category": category,
-                    "risk_score": risk_score,
-                    "assessment_date": now_iso,
-                },
-            )
-        except Exception:
-            logger.exception("Could not publish risk_updated event.")
-
         return assessment_record
 
     # ---------------------------------------------------------
@@ -1071,7 +1082,7 @@ class RiskEngine:
         locations = await cursor.fetchall()
         results: List[Dict[str, Any]] = []
 
-        for index, row in enumerate(locations):
+        for row in locations:
             location_id = int(row["id"])
 
             try:
@@ -1086,9 +1097,6 @@ class RiskEngine:
                     "Risk assessment failed for location %s",
                     location_id,
                 )
-
-            if index < len(locations) - 1:
-                await asyncio.sleep(1.5)
 
         return results
 

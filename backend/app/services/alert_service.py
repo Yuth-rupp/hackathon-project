@@ -97,9 +97,10 @@ class AlertService:
                 """
                 SELECT id, severity, created_at FROM alerts 
                 WHERE location_id = ? AND status = 'active' AND severity = ? AND created_at >= ?
+                  AND trigger_source = ?
                 ORDER BY created_at DESC LIMIT 1
                 """,
-                (location_id, severity, twelve_hours_ago)
+                (location_id, severity, twelve_hours_ago, trigger_source)
             )
             existing = await cursor.fetchone()
             if existing:
@@ -188,6 +189,55 @@ class AlertService:
 
         return alert_record
 
+    async def _recent_assessment(
+        self,
+        db: aiosqlite.Connection,
+        location_id: int,
+        max_age_seconds: int = 120,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Reuse an assessment computed in the last couple of minutes (for example
+        by the risk job that just ran) instead of assessing - and storing - the
+        same location twice. Returns None when there is no recent one.
+        """
+        try:
+            cursor = await db.execute(
+                """
+                SELECT risk_probability, risk_category, created_at,
+                       contributing_factors_json
+                FROM risk_assessments
+                WHERE location_id = ?
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (location_id,),
+            )
+            row = await cursor.fetchone()
+            if not row:
+                return None
+
+            created = datetime.fromisoformat(
+                str(row["created_at"]).replace("Z", "+00:00")
+            )
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=timezone.utc)
+
+            age = (datetime.now(timezone.utc) - created).total_seconds()
+            if age > max_age_seconds:
+                return None
+
+            return {
+                "risk_category": row["risk_category"],
+                "risk_probability": row["risk_probability"],
+                "assessment_date": row["created_at"],
+                "reused_assessment": True,
+                "contributing_factors": json.loads(
+                    row["contributing_factors_json"] or "{}"
+                ),
+            }
+        except Exception:
+            return None
+
     async def check_thresholds(self, db: aiosqlite.Connection) -> List[Dict[str, Any]]:
         """
         Evaluate all monitored locations and stations against safety thresholds.
@@ -202,7 +252,10 @@ class AlertService:
 
         for loc in locations:
             loc_id = loc["id"]
-            assessment = await risk_engine.assess_location(loc_id, db)
+            assessment = (
+                await self._recent_assessment(db, loc_id)
+                or await risk_engine.assess_location(loc_id, db)
+            )
             category = assessment.get("risk_category")
             prob = assessment.get("risk_probability", 0.0)
 

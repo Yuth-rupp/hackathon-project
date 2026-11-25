@@ -8,7 +8,6 @@ import {
 import {
   Alert,
   CommunityProfile,
-  CommunityRiskLive,
   DashboardKPIs,
   DataSource,
   FloodEvent,
@@ -17,10 +16,8 @@ import {
   SatelliteAcquisition,
   SatelliteStatus,
   Station,
-  WeatherDailyForecast,
   WeatherData,
   WeatherForecast,
-  WeatherHourlyForecast,
 } from "@/types";
 
 // ============================================================
@@ -255,7 +252,7 @@ export async function fetchDashboardKPIs(): Promise<DashboardKPIs> {
 // CURRENT WEATHER
 // ============================================================
 
-async function fetchWeatherCurrentFromBackend(
+export async function fetchWeatherCurrent(
   locationId: string,
 ): Promise<WeatherData> {
   const response = await fetch(
@@ -292,7 +289,7 @@ async function fetchWeatherCurrentFromBackend(
 // WEATHER FORECAST
 // ============================================================
 
-async function fetchWeatherForecastFromBackend(
+export async function fetchWeatherForecast(
   locationId: string,
 ): Promise<WeatherForecast> {
   const response = await fetch(
@@ -343,7 +340,7 @@ async function fetchWeatherForecastFromBackend(
 // RAINFALL ACCUMULATION
 // ============================================================
 
-async function fetchWeatherRainfallAccumulationFromBackend(
+export async function fetchWeatherRainfallAccumulation(
   locationId: string,
 ): Promise<WeatherRainfallAccumulation> {
   const response = await fetch(
@@ -376,7 +373,7 @@ async function fetchWeatherRainfallAccumulationFromBackend(
 // SOIL MOISTURE
 // ============================================================
 
-async function fetchWeatherSoilMoistureFromBackend(
+export async function fetchWeatherSoilMoisture(
   locationId: string,
 ): Promise<WeatherSoilMoisture> {
   const response = await fetch(
@@ -399,406 +396,6 @@ async function fetchWeatherSoilMoistureFromBackend(
     timestamp: item.timestamp ?? null,
     data_source: String(item.data_source ?? "Open-Meteo"),
   };
-}
-
-// ============================================================
-// DIRECT OPEN-METEO (browser -> Open-Meteo, backend as fallback)
-//
-// Open-Meteo limits requests per IP address. A shared hosting server
-// quickly hits that limit (HTTP 429), but every visitor's own browser has
-// its own IP, so the browser asks Open-Meteo directly. If that fails, the
-// FloodPulse backend (MET Norway / NASA POWER fallback) is used instead.
-// ============================================================
-
-const OPEN_METEO_FORECAST_URL = "https://api.open-meteo.com/v1/forecast";
-const OPEN_METEO_TIMEZONE = "Asia/Phnom_Penh";
-const OPEN_METEO_CACHE_MS = 5 * 60 * 1000; // Open-Meteo itself updates ~every 15 min
-const OPEN_METEO_PAST_CACHE_MS = 30 * 60 * 1000;
-const OPEN_METEO_SOURCE_LABEL = "Open-Meteo (live, direct)";
-const SOIL_POROSITY_M3M3 = 0.48;
-
-interface OpenMeteoBundle {
-  current: Record<string, any>;
-  hourly: Record<string, any[]>;
-  daily: Record<string, any[]>;
-}
-
-const openMeteoCache = new Map<string, { at: number; promise: Promise<any> }>();
-
-function cachedOpenMeteoJson<T>(
-  key: string,
-  params: Record<string, string>,
-  ttlMs: number,
-  validate: (json: any) => boolean,
-): Promise<T> {
-  const cached = openMeteoCache.get(key);
-
-  if (cached && Date.now() - cached.at < ttlMs) {
-    return cached.promise as Promise<T>;
-  }
-
-  const query = new URLSearchParams(params).toString();
-
-  const promise = fetch(`${OPEN_METEO_FORECAST_URL}?${query}`, {
-    cache: "no-store",
-  }).then(async (response) => {
-    if (!response.ok) {
-      throw new Error(`Open-Meteo HTTP ${response.status}`);
-    }
-
-    const json = await response.json();
-
-    if (!validate(json)) {
-      throw new Error("Open-Meteo returned incomplete data");
-    }
-
-    return json as T;
-  });
-
-  openMeteoCache.set(key, { at: Date.now(), promise });
-
-  // Never keep a failed request in the cache.
-  promise.catch(() => {
-    if (openMeteoCache.get(key)?.promise === promise) {
-      openMeteoCache.delete(key);
-    }
-  });
-
-  return promise;
-}
-
-function normalizeKey(value: unknown): string {
-  return String(value ?? "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]/g, "");
-}
-
-function findProvinceLocation(locationId: string): any | null {
-  const wanted = normalizeKey(locationId);
-
-  const match = (MONITORING_LOCATIONS as any[]).find(
-    (loc) =>
-      normalizeKey(loc.id) === wanted || normalizeKey(loc.name) === wanted,
-  );
-
-  if (
-    !match ||
-    !Number.isFinite(Number(match.lat)) ||
-    !Number.isFinite(Number(match.lon))
-  ) {
-    return null;
-  }
-
-  return match;
-}
-
-function fetchOpenMeteoBundle(
-  lat: number,
-  lon: number,
-): Promise<OpenMeteoBundle> {
-  return cachedOpenMeteoJson<OpenMeteoBundle>(
-    `bundle:${lat.toFixed(3)},${lon.toFixed(3)}`,
-    {
-      latitude: String(lat),
-      longitude: String(lon),
-      current:
-        "temperature_2m,relative_humidity_2m,precipitation,weather_code,wind_speed_10m,wind_direction_10m,cloud_cover",
-      hourly:
-        "temperature_2m,precipitation,precipitation_probability,relative_humidity_2m,cloud_cover,soil_moisture_0_to_7cm,soil_moisture_7_to_28cm,soil_moisture_28_to_100cm",
-      daily:
-        "weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max,wind_speed_10m_max",
-      forecast_days: "7",
-      timezone: OPEN_METEO_TIMEZONE,
-    },
-    OPEN_METEO_CACHE_MS,
-    (json) => Boolean(json?.current && json?.hourly?.time && json?.daily?.time),
-  );
-}
-
-function valueAt(series: unknown, index: number): number | null {
-  if (!Array.isArray(series) || index < 0 || index >= series.length) {
-    return null;
-  }
-
-  return toNullableNumber(series[index]);
-}
-
-/** Index of the hourly entry for the current local hour (or the next one). */
-function currentHourIndex(bundle: OpenMeteoBundle): number {
-  const times: string[] = (bundle.hourly.time ?? []).map(String);
-  const key = String(bundle.current.time ?? "").slice(0, 13);
-
-  const exact = times.findIndex((t) => t.slice(0, 13) === key);
-  if (exact >= 0) return exact;
-
-  const next = times.findIndex((t) => t.slice(0, 13) >= key);
-  return next >= 0 ? next : 0;
-}
-
-// ---------------- current weather ----------------
-
-export async function fetchWeatherCurrent(
-  locationId: string,
-): Promise<WeatherData> {
-  const loc = findProvinceLocation(locationId);
-
-  if (loc) {
-    try {
-      const bundle = await fetchOpenMeteoBundle(
-        Number(loc.lat),
-        Number(loc.lon),
-      );
-
-      const cur = bundle.current;
-      const hourIndex = currentHourIndex(bundle);
-      const code = toNullableNumber(cur.weather_code);
-
-      return {
-        location_id: String(loc.id),
-        location_name: String(loc.name ?? locationId),
-        temperature_c: toNullableNumber(cur.temperature_2m),
-        precipitation_mm: toNullableNumber(cur.precipitation),
-        precipitation_probability_pct: valueAt(
-          bundle.hourly.precipitation_probability,
-          hourIndex,
-        ),
-        humidity_pct: toNullableNumber(cur.relative_humidity_2m),
-        wind_speed_kmh: toNullableNumber(cur.wind_speed_10m),
-        wind_direction_deg: toNullableNumber(cur.wind_direction_10m),
-        cloud_cover_pct: toNullableNumber(cur.cloud_cover),
-        soil_moisture: valueAt(bundle.hourly.soil_moisture_0_to_7cm, hourIndex),
-        weather_code: code,
-        weather_description:
-          code === null ? "Unavailable" : decodeWeatherCode(code),
-        timestamp: String(cur.time ?? ""),
-        data_source: OPEN_METEO_SOURCE_LABEL,
-        timezone: OPEN_METEO_TIMEZONE,
-      };
-    } catch (err) {
-      console.warn("Open-Meteo direct request failed, using backend:", err);
-    }
-  }
-
-  return fetchWeatherCurrentFromBackend(locationId);
-}
-
-// ---------------- forecast ----------------
-
-export async function fetchWeatherForecast(
-  locationId: string,
-): Promise<WeatherForecast> {
-  const loc = findProvinceLocation(locationId);
-
-  if (loc) {
-    try {
-      const bundle = await fetchOpenMeteoBundle(
-        Number(loc.lat),
-        Number(loc.lon),
-      );
-
-      const dailyTimes: string[] = (bundle.daily.time ?? []).map(String);
-      const hourlyTimes: string[] = (bundle.hourly.time ?? []).map(String);
-      const start = currentHourIndex(bundle);
-      const end = Math.min(start + 48, hourlyTimes.length);
-
-      const daily: WeatherDailyForecast[] = dailyTimes
-        .slice(0, 7)
-        .map((date, i) => {
-          const code = valueAt(bundle.daily.weather_code, i);
-
-          return {
-            date,
-            temperature_max: valueAt(bundle.daily.temperature_2m_max, i),
-            temperature_min: valueAt(bundle.daily.temperature_2m_min, i),
-            precipitation_sum_mm: valueAt(bundle.daily.precipitation_sum, i),
-            precipitation_probability_max: valueAt(
-              bundle.daily.precipitation_probability_max,
-              i,
-            ),
-            weather_code: code,
-            weather_description:
-              code === null ? "Unavailable" : decodeWeatherCode(code),
-            wind_speed_max_kmh: valueAt(bundle.daily.wind_speed_10m_max, i),
-          };
-        });
-
-      const hourly: WeatherHourlyForecast[] = [];
-
-      for (let i = start; i < end; i++) {
-        const topsoil = valueAt(bundle.hourly.soil_moisture_0_to_7cm, i);
-
-        hourly.push({
-          time: hourlyTimes[i],
-          temperature_c: valueAt(bundle.hourly.temperature_2m, i),
-          precipitation_mm: valueAt(bundle.hourly.precipitation, i),
-          precipitation_probability_pct: valueAt(
-            bundle.hourly.precipitation_probability,
-            i,
-          ),
-          relative_humidity_pct: valueAt(bundle.hourly.relative_humidity_2m, i),
-          cloud_cover_pct: valueAt(bundle.hourly.cloud_cover, i),
-          soil_moisture: topsoil,
-          soil_moisture_0_7cm: topsoil,
-          soil_moisture_7_28cm: valueAt(
-            bundle.hourly.soil_moisture_7_to_28cm,
-            i,
-          ),
-          soil_moisture_28_100cm: valueAt(
-            bundle.hourly.soil_moisture_28_to_100cm,
-            i,
-          ),
-        });
-      }
-
-      if (daily.length > 0 && hourly.length > 0) {
-        return {
-          location_id: String(loc.id),
-          location_name: String(loc.name ?? locationId),
-          daily,
-          hourly,
-          generated_at: new Date().toISOString(),
-          data_source: OPEN_METEO_SOURCE_LABEL,
-          timezone: OPEN_METEO_TIMEZONE,
-        };
-      }
-    } catch (err) {
-      console.warn("Open-Meteo direct request failed, using backend:", err);
-    }
-  }
-
-  return fetchWeatherForecastFromBackend(locationId);
-}
-
-// ---------------- rainfall accumulation (3 / 7 / 30 day) ----------------
-
-export async function fetchWeatherRainfallAccumulation(
-  locationId: string,
-): Promise<WeatherRainfallAccumulation> {
-  const loc = findProvinceLocation(locationId);
-
-  if (loc) {
-    try {
-      const lat = Number(loc.lat);
-      const lon = Number(loc.lon);
-
-      const [bundle, past] = await Promise.all([
-        fetchOpenMeteoBundle(lat, lon),
-        cachedOpenMeteoJson<{
-          daily: { time: string[]; precipitation_sum: any[] };
-        }>(
-          `past30:${lat.toFixed(3)},${lon.toFixed(3)}`,
-          {
-            latitude: String(lat),
-            longitude: String(lon),
-            daily: "precipitation_sum",
-            past_days: "30",
-            forecast_days: "1",
-            timezone: OPEN_METEO_TIMEZONE,
-          },
-          OPEN_METEO_PAST_CACHE_MS,
-          (json) =>
-            Array.isArray(json?.daily?.time) &&
-            Array.isArray(json?.daily?.precipitation_sum),
-        ),
-      ]);
-
-      // past_days=30 + today: drop today (last entry) -> 30 completed days.
-      const pastTimes = past.daily.time.slice(0, -1);
-      const pastValues = past.daily.precipitation_sum.slice(0, -1);
-      const validPast = pastValues
-        .map((v) => toNullableNumber(v))
-        .filter((v): v is number => v !== null);
-
-      const rainfall30d =
-        pastTimes.length > 0 && validPast.length >= pastTimes.length * 0.8
-          ? Math.round(validPast.reduce((a, b) => a + b, 0) * 10) / 10
-          : null;
-
-      const dailySums = (bundle.daily.precipitation_sum ?? []).map((v) =>
-        toNullableNumber(v),
-      );
-      const sumFirst = (n: number): number | null => {
-        const slice = dailySums.slice(0, n);
-        if (slice.length === 0 || slice.some((v) => v === null)) return null;
-        return (
-          Math.round(slice.reduce<number>((a, b) => a + (b ?? 0), 0) * 10) / 10
-        );
-      };
-
-      const rain7d = sumFirst(7);
-      const topsoil = valueAt(
-        bundle.hourly.soil_moisture_0_to_7cm,
-        currentHourIndex(bundle),
-      );
-      const saturation =
-        topsoil === null
-          ? null
-          : Math.round(
-              Math.min(100, (topsoil / SOIL_POROSITY_M3M3) * 100) * 10,
-            ) / 10;
-
-      let threat = "Low";
-      if ((rain7d ?? 0) >= 150 || (saturation ?? 0) >= 80) threat = "High";
-      else if ((rain7d ?? 0) >= 75 || (saturation ?? 0) >= 60)
-        threat = "Moderate";
-
-      return {
-        location_id: String(loc.id),
-        location_name: String(loc.name ?? locationId),
-        rainfall_3d_mm: sumFirst(3),
-        rainfall_7d_mm: rain7d,
-        rainfall_30d_mm: rainfall30d,
-        rainfall_30d_start: pastTimes[0] ?? null,
-        rainfall_30d_end: pastTimes[pastTimes.length - 1] ?? null,
-        soil_saturation_index: saturation,
-        flood_threat_level: threat,
-        data_source: OPEN_METEO_SOURCE_LABEL,
-        retrieved_at: new Date().toISOString(),
-      };
-    } catch (err) {
-      console.warn("Open-Meteo rainfall request failed, using backend:", err);
-    }
-  }
-
-  return fetchWeatherRainfallAccumulationFromBackend(locationId);
-}
-
-// ---------------- soil moisture ----------------
-
-export async function fetchWeatherSoilMoisture(
-  locationId: string,
-): Promise<WeatherSoilMoisture> {
-  const loc = findProvinceLocation(locationId);
-
-  if (loc) {
-    try {
-      const bundle = await fetchOpenMeteoBundle(
-        Number(loc.lat),
-        Number(loc.lon),
-      );
-
-      const index = currentHourIndex(bundle);
-      const top = valueAt(bundle.hourly.soil_moisture_0_to_7cm, index);
-      const root = valueAt(bundle.hourly.soil_moisture_7_to_28cm, index);
-      const deep = valueAt(bundle.hourly.soil_moisture_28_to_100cm, index);
-
-      if (top !== null || root !== null || deep !== null) {
-        return {
-          location_id: String(loc.id),
-          location_name: String(loc.name ?? locationId),
-          topsoil_moisture_0_7cm: top,
-          root_zone_moisture_7_28cm: root,
-          deep_moisture_28_100cm: deep,
-          timestamp: String(bundle.current.time ?? ""),
-          data_source: OPEN_METEO_SOURCE_LABEL,
-        };
-      }
-    } catch (err) {
-      console.warn("Open-Meteo soil request failed, using backend:", err);
-    }
-  }
-
-  return fetchWeatherSoilMoistureFromBackend(locationId);
 }
 
 // ============================================================
@@ -1628,33 +1225,4 @@ export async function fetchCommunityProfile(
     safe_zone_elevation_m: 20.0,
     contact_hotline: "1294 (NCDM Free Hotline)",
   };
-}
-
-// ============================================================
-// LIVE COMMUNITY RISK
-// ============================================================
-
-/**
- * Live risk, gauges, alerts, discharge and safe-site posture for every
- * province. Real data only: when the API is down this throws, and the page
- * shows that honestly instead of inventing numbers.
- */
-export async function fetchCommunityRiskLive(): Promise<CommunityRiskLive> {
-  const response = await fetch(`${API_BASE_URL}/community/risk-live`, {
-    cache: "no-store",
-    headers: {
-      Accept: "application/json",
-    },
-  });
-
-  if (!response.ok) {
-    const message = await readErrorMessage(
-      response,
-      `Community risk API failed: HTTP ${response.status}`,
-    );
-
-    throw new Error(message);
-  }
-
-  return (await response.json()) as CommunityRiskLive;
 }

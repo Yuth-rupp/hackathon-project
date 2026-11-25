@@ -93,7 +93,7 @@ scheduler = AsyncIOScheduler()
 async def scheduled_weather_sync():
     """
     Synchronize Open-Meteo weather data for all
-    monitoring locations, then immediately reassess risk & alerts.
+    monitoring locations.
     """
 
     logger.info("Starting weather synchronization...")
@@ -113,7 +113,7 @@ async def scheduled_weather_sync():
         return
 
     # Fresh rainfall and soil data is now stored, so recalculate risk
-    # and evaluate emergency alert thresholds immediately.
+    # immediately instead of waiting for the next 15-minute cycle.
     await scheduled_risk_assessment()
 
 
@@ -159,8 +159,10 @@ async def scheduled_satellite_check():
 
 async def scheduled_risk_assessment():
     """
-    Recalculate flood risk for all monitoring locations,
-    then immediately run threshold alert verification.
+    Recalculate flood risk for all monitoring locations.
+
+    This job uses the latest data already stored in SQLite.
+    It does not force external providers to update their data.
     """
 
     logger.info("Starting automatic flood risk reassessment...")
@@ -184,10 +186,6 @@ async def scheduled_risk_assessment():
 
     except Exception:
         logger.exception("Automatic flood risk reassessment failed.")
-        return
-
-    # Immediately verify whether updated risk scores crossed alert thresholds.
-    await scheduled_alert_check()
 
 
 # =========================================================
@@ -251,9 +249,7 @@ async def lifespan(app: FastAPI):
 
             logger.info("Configuring background scheduler...")
 
-            now_utc = datetime.now(timezone.utc)
-
-            # WEATHER SYNCHRONIZATION (runs immediately at startup, chains risk + alerts)
+            # WEATHER SYNCHRONIZATION
             scheduler.add_job(
                 scheduled_weather_sync,
                 trigger="interval",
@@ -263,10 +259,12 @@ async def lifespan(app: FastAPI):
                 replace_existing=True,
                 max_instances=1,
                 coalesce=True,
-                next_run_time=now_utc,
+                # Run once at startup so rainfall and soil data exist
+                # before the first risk assessment is shown.
+                next_run_time=datetime.now(timezone.utc),
             )
 
-            # RIVER DISCHARGE INGESTION (runs immediately at startup)
+            # RIVER DISCHARGE INGESTION
             discharge_interval = max(
                 settings.DISCHARGE_REFRESH_INTERVAL_HOURS,
                 6,
@@ -281,10 +279,10 @@ async def lifespan(app: FastAPI):
                 replace_existing=True,
                 max_instances=1,
                 coalesce=True,
-                next_run_time=now_utc,
+                next_run_time=datetime.now(timezone.utc),
             )
 
-            # MRC GAUGE WATER LEVEL POLLING (runs 10s after startup)
+            # MRC GAUGE WATER LEVEL POLLING
             scheduler.add_job(
                 fetch_gauge_job,
                 trigger="interval",
@@ -294,10 +292,9 @@ async def lifespan(app: FastAPI):
                 replace_existing=True,
                 max_instances=1,
                 coalesce=True,
-                next_run_time=now_utc + timedelta(seconds=10),
             )
 
-            # SATELLITE CATALOG MONITORING (runs 15s after startup)
+            # SATELLITE CATALOG MONITORING
             scheduler.add_job(
                 scheduled_satellite_check,
                 trigger="interval",
@@ -307,10 +304,9 @@ async def lifespan(app: FastAPI):
                 replace_existing=True,
                 max_instances=1,
                 coalesce=True,
-                next_run_time=now_utc + timedelta(seconds=15),
             )
 
-            # AUTOMATIC RISK REASSESSMENT (chains alert check automatically)
+            # AUTOMATIC RISK REASSESSMENT
             scheduler.add_job(
                 scheduled_risk_assessment,
                 trigger="interval",
@@ -320,7 +316,8 @@ async def lifespan(app: FastAPI):
                 replace_existing=True,
                 max_instances=1,
                 coalesce=True,
-                next_run_time=now_utc + timedelta(minutes=2),
+                # Give the startup weather and discharge fetches time to finish.
+                next_run_time=datetime.now(timezone.utc) + timedelta(minutes=2),
             )
 
             # AUTOMATIC EMERGENCY ALERT CHECKING
@@ -333,7 +330,7 @@ async def lifespan(app: FastAPI):
                 replace_existing=True,
                 max_instances=1,
                 coalesce=True,
-                next_run_time=now_utc + timedelta(minutes=2, seconds=15),
+                next_run_time=datetime.now(timezone.utc),
             )
 
             # START SCHEDULER
@@ -381,6 +378,7 @@ async def lifespan(app: FastAPI):
 
             logger.info("Starting Telegram bot...")
 
+            # A bad or revoked token must not stop the whole API from starting.
             try:
                 telegram_application = await start_telegram_bot()
                 logger.info("Telegram bot started.")
