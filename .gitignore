@@ -15,14 +15,19 @@ node_modules/
 .next/
 out/
 build/
+*.tsbuildinfo
+
+# Local databases & archives
+*.db
+*.sqlite
+*.zip
+
+# Editor backups
+*.backup
+*.backup-*
+*.before-*
+*.bak
 
 # OS & Editor
 .DS_Store
 Thumbs.db
-path/to/large-file
-
-Add-Content .gitignore "`nfloodpulse-ai.zip"
-git add .gitignore
-git commit -m "Ignore floodpulse-ai.zip"
-*.zip
-*.db
