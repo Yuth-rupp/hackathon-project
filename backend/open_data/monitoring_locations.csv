@@ -1,0 +1,6 @@
+id,name,name_km,type,province,lat,lon,elevation_m,distance_to_lake_km,flood_frequency_score,boundary_geojson_path,metadata_json
+1,Siem Reap,ក្រុងសៀមរាប,urban_floodplain,Siem Reap,13.36,103.86,18.0,12.5,0.65,,"{""key"": ""siem_reap""}"
+2,Battambang,ក្រុងបាត់ដំបង,riverine_plain,Battambang,13.1,103.2,16.0,38.0,0.58,,"{""key"": ""battambang""}"
+3,Pursat,ក្រុងពោធិ៍សាត់,tributary_delta,Pursat,12.54,103.92,15.0,24.0,0.72,,"{""key"": ""pursat""}"
+4,Kampong Thom,ក្រុងស្ទឹងសែន,river_mouth,Kampong Thom,12.71,104.89,12.0,18.0,0.78,,"{""key"": ""kampong_thom""}"
+5,Kampong Chhnang,ក្រុងកំពង់ឆ្នាំង,lake_outlet,Kampong Chhnang,12.25,104.67,11.0,8.0,0.85,,"{""key"": ""kampong_chhnang""}"
